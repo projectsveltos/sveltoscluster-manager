@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -44,6 +45,7 @@ type SveltosClusterReconciler struct {
 //+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=sveltosclusters/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=sveltosclusters/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+//+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=debuggingconfigurations,verbs=get;list;watch
 
 func (r *SveltosClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
 	logger := ctrl.LoggerFrom(ctx)
@@ -104,15 +106,17 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 	logger := sveltosClusterScope.Logger
 	logger.V(logs.LogInfo).Info("Reconciling SveltosCluster")
 
-	sveltosCluster := sveltosClusterScope.SveltosCluster
-	_, err := clusterproxy.GetSveltosKubernetesClient(ctx, logger, r.Client, r.Scheme, sveltosCluster.Namespace, sveltosCluster.Name)
+	_, err := clusterproxy.GetSveltosKubernetesClient(ctx, logger, r.Client, r.Scheme,
+		sveltosClusterScope.SveltosCluster.Namespace, sveltosClusterScope.SveltosCluster.Name)
 	if err != nil {
 		errorMessage := err.Error()
-		sveltosCluster.Status.Ready = false
-		sveltosCluster.Status.FailureMessage = &errorMessage
+		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get client: %v", err))
+		sveltosClusterScope.SveltosCluster.Status.Ready = false
+		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 	} else {
-		sveltosCluster.Status.Ready = true
-		sveltosCluster.Status.FailureMessage = nil
+		logger.V(logs.LogInfo).Info("got client")
+		sveltosClusterScope.SveltosCluster.Status.Ready = true
+		sveltosClusterScope.SveltosCluster.Status.FailureMessage = nil
 	}
 
 	logger.V(logs.LogInfo).Info("Reconcile success")
