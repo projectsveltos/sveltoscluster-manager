@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Namespace
 metadata:
   labels:
-    control-plane: sveltoscluster-manager
+    control-plane: sc-manager
   name: projectsveltos
 ---
 apiVersion: apps/v1
@@ -11,18 +11,18 @@ metadata:
   name: manager
   namespace: projectsveltos
   labels:
-    control-plane: sveltoscluster-manager
+    control-plane: sc-manager
 spec:
   selector:
     matchLabels:
-      control-plane: sveltoscluster-manager
+      control-plane: sc-manager
   replicas: 1
   template:
     metadata:
       annotations:
         kubectl.kubernetes.io/default-container: manager
       labels:
-        control-plane: sveltoscluster-manager
+        control-plane: sc-manager
     spec:
       securityContext:
         runAsNonRoot: true
