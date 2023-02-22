@@ -19,7 +19,7 @@ SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
 
 # Define Docker related variables.
-REGISTRY ?= gianlucam76
+REGISTRY ?= projectsveltos
 IMAGE_NAME ?= sveltoscluster-manager
 ARCH ?= amd64
 OS ?= $(shell uname -s | tr A-Z a-z)
