@@ -237,7 +237,7 @@ spec:
         - --leader-elect
         command:
         - /manager
-        image: projectsveltos/sveltoscluster-manager-amd64:main
+        image: projectsveltos/sveltoscluster-manager-amd64:v0.11.0
         livenessProbe:
           httpGet:
             path: /healthz
