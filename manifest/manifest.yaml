@@ -52,7 +52,6 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  creationTimestamp: null
   name: sc-manager-role
 rules:
 - apiGroups:
@@ -237,7 +236,7 @@ spec:
         - --leader-elect
         command:
         - /manager
-        image: projectsveltos/sveltoscluster-manager-amd64:main
+        image: projectsveltos/sveltoscluster-manager-amd64:dev
         livenessProbe:
           httpGet:
             path: /healthz
