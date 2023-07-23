@@ -25,7 +25,7 @@ ARCH ?= amd64
 OS ?= $(shell uname -s | tr A-Z a-z)
 K8S_LATEST_VER ?= $(shell curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)
 export CONTROLLER_IMG ?= $(REGISTRY)/$(IMAGE_NAME)
-TAG ?= v0.14.0 
+TAG ?= main
 
 .PHONY: all
 all: build
@@ -159,6 +159,8 @@ endif
 ifndef K8S_VERSION
 K8S_VERSION := v1.27.0
 endif
+
+CONTROL_CLUSTER_NAME ?= sveltos-management
 
 .PHONY: test
 test: manifests generate fmt vet $(SETUP_ENVTEST) ## Run uts.
