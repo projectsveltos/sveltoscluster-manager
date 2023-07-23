@@ -19,10 +19,14 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/pkg/errors"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -32,6 +36,12 @@ import (
 	"github.com/projectsveltos/libsveltos/lib/clusterproxy"
 	logs "github.com/projectsveltos/libsveltos/lib/logsettings"
 	"github.com/projectsveltos/sveltoscluster-manager/pkg/scope"
+)
+
+const (
+	// normalRequeueAfter is how long to wait before checking again to see if the cluster can be moved
+	// to ready after or workload features (for instance ingress or reporter) have failed
+	normalRequeueAfter = 60 * time.Second
 )
 
 // SveltosClusterReconciler reconciles a SveltosCluster object
@@ -95,7 +105,8 @@ func (r *SveltosClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// Handle non-deleted clusterProfile
 	r.reconcileNormal(ctx, sveltosClusterScope)
-	return reconcile.Result{}, nil
+	// Reconcile back in normalRequeueAfter time
+	return reconcile.Result{Requeue: true, RequeueAfter: normalRequeueAfter}, nil
 }
 
 func (r *SveltosClusterReconciler) reconcileNormal(
@@ -106,7 +117,15 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 	logger := sveltosClusterScope.Logger
 	logger.V(logs.LogInfo).Info("Reconciling SveltosCluster")
 
-	_, err := clusterproxy.GetSveltosKubernetesClient(ctx, logger, r.Client, r.Scheme,
+	s := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(s); err != nil {
+		errorMessage := err.Error()
+		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get scheme: %v", err))
+		sveltosClusterScope.SveltosCluster.Status.Ready = false
+		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+	}
+
+	c, err := clusterproxy.GetSveltosKubernetesClient(ctx, logger, r.Client, s,
 		sveltosClusterScope.SveltosCluster.Namespace, sveltosClusterScope.SveltosCluster.Name)
 	if err != nil {
 		errorMessage := err.Error()
@@ -117,6 +136,15 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 		logger.V(logs.LogInfo).Info("got client")
 		sveltosClusterScope.SveltosCluster.Status.Ready = true
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = nil
+
+		ns := &corev1.Namespace{}
+		err = c.Get(context.TODO(), types.NamespacedName{Name: "projectsveltos"}, ns)
+		if err != nil && !apierrors.IsNotFound(err) {
+			errorMessage := err.Error()
+			logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get projectsveltos namespace: %v", err))
+			sveltosClusterScope.SveltosCluster.Status.Ready = false
+			sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+		}
 	}
 
 	logger.V(logs.LogInfo).Info("Reconcile success")
