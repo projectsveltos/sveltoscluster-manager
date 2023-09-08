@@ -7,7 +7,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.11.0
 	github.com/onsi/gomega v1.27.8
 	github.com/pkg/errors v0.9.1
-	github.com/projectsveltos/libsveltos v0.15.3-0.20230809060457-84a0ee57d801
+	github.com/projectsveltos/libsveltos v0.15.4-0.20230809060457-84a0ee57d801
 	github.com/spf13/pflag v1.0.5
 	k8s.io/api v0.27.2
 	k8s.io/apiextensions-apiserver v0.27.2
@@ -15,8 +15,8 @@ require (
 	k8s.io/client-go v0.27.2
 	k8s.io/component-base v0.27.2
 	k8s.io/klog/v2 v2.90.1
-	sigs.k8s.io/cluster-api v1.5.0
-	sigs.k8s.io/controller-runtime v0.15.0
+	sigs.k8s.io/cluster-api v1.5.1
+	sigs.k8s.io/controller-runtime v0.15.1
 )
 
 require (
@@ -57,7 +57,7 @@ require (
 	github.com/prometheus/common v0.42.0 // indirect
 	github.com/prometheus/procfs v0.10.1 // indirect
 	github.com/spf13/cobra v1.7.0 // indirect
-	golang.org/x/net v0.12.0 // indirect
+	golang.org/x/net v0.13.0 // indirect
 	golang.org/x/oauth2 v0.10.0 // indirect
 	golang.org/x/sys v0.10.0 // indirect
 	golang.org/x/term v0.10.0 // indirect
