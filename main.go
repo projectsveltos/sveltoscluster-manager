@@ -96,6 +96,7 @@ func main() {
 
 	if err = (&controllers.SveltosClusterReconciler{
 		Client:               mgr.GetClient(),
+		Config:               *mgr.GetConfig(),
 		Scheme:               mgr.GetScheme(),
 		ConcurrentReconciles: concurrentReconciles,
 	}).SetupWithManager(mgr); err != nil {
