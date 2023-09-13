@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -35,6 +36,7 @@ import (
 	libsveltosv1alpha1 "github.com/projectsveltos/libsveltos/api/v1alpha1"
 	"github.com/projectsveltos/libsveltos/lib/clusterproxy"
 	logs "github.com/projectsveltos/libsveltos/lib/logsettings"
+	"github.com/projectsveltos/libsveltos/lib/utils"
 	"github.com/projectsveltos/sveltoscluster-manager/pkg/scope"
 )
 
@@ -47,6 +49,7 @@ const (
 // SveltosClusterReconciler reconciles a SveltosCluster object
 type SveltosClusterReconciler struct {
 	client.Client
+	rest.Config
 	Scheme               *runtime.Scheme
 	ConcurrentReconciles int
 }
@@ -144,6 +147,16 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 			logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get projectsveltos namespace: %v", err))
 			sveltosClusterScope.SveltosCluster.Status.Ready = false
 			sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+		}
+
+		currentVersion, err := utils.GetKubernetesVersion(ctx, &r.Config, logger)
+		if err != nil {
+			logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get cluster kubernetes version %v", err))
+			errorMessage := err.Error()
+			sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+		} else {
+			sveltosClusterScope.SveltosCluster.Status.Version = currentVersion
+			logger.V(logs.LogDebug).Info(fmt.Sprintf("cluster version %s", currentVersion))
 		}
 	}
 
