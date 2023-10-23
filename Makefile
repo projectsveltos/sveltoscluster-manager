@@ -25,7 +25,7 @@ ARCH ?= amd64
 OS ?= $(shell uname -s | tr A-Z a-z)
 K8S_LATEST_VER ?= $(shell curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)
 export CONTROLLER_IMG ?= $(REGISTRY)/$(IMAGE_NAME)
-TAG ?= main
+TAG ?= dev
 
 .PHONY: all
 all: build
@@ -90,10 +90,6 @@ $(GINKGO): $(TOOLS_DIR)/go.mod
 
 $(KIND): $(TOOLS_DIR)/go.mod
 	cd $(TOOLS_DIR) && $(GOBUILD) -tags tools -o $(subst $(TOOLS_DIR)/hack/tools/,,$@) sigs.k8s.io/kind
-
-$(CLUSTERCTL): $(TOOLS_DIR)/go.mod ## Build clusterctl binary
-	cd $(TOOLS_DIR); $(GOBUILD) -trimpath  -ldflags $(CLUSTERAPI_LDFLAGS) -o $(subst $(TOOLS_DIR)/hack/tools/,,$@) sigs.k8s.io/cluster-api/cmd/clusterctl
-	mkdir -p $(HOME)/.cluster-api # create cluster api init directory, if not present	
 
 $(KUBECTL):
 	curl -L https://storage.googleapis.com/kubernetes-release/release/$(K8S_LATEST_VER)/bin/$(OS)/$(ARCH)/kubectl -o $@

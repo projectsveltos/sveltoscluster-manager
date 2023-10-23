@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -36,6 +37,7 @@ import (
 	libsveltosv1alpha1 "github.com/projectsveltos/libsveltos/api/v1alpha1"
 	"github.com/projectsveltos/libsveltos/lib/clusterproxy"
 	logs "github.com/projectsveltos/libsveltos/lib/logsettings"
+	"github.com/projectsveltos/libsveltos/lib/sharding"
 	"github.com/projectsveltos/libsveltos/lib/utils"
 	"github.com/projectsveltos/sveltoscluster-manager/pkg/scope"
 )
@@ -52,6 +54,7 @@ type SveltosClusterReconciler struct {
 	rest.Config
 	Scheme               *runtime.Scheme
 	ConcurrentReconciles int
+	ShardKey             string // when set, only clusters matching the ShardKey will be reconciled
 }
 
 //+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=sveltosclusters,verbs=get;list;watch;create;update;patch;delete
@@ -91,6 +94,15 @@ func (r *SveltosClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			"unable to create clusterprofile scope for %s",
 			req.NamespacedName,
 		)
+	}
+
+	var isMatch bool
+	isMatch, err = r.isClusterAShardMatch(ctx, sveltosCluster, logger)
+	if err != nil {
+		return reconcile.Result{Requeue: true, RequeueAfter: normalRequeueAfter}, nil
+	} else if !isMatch {
+		// This sveltoscluster pod is not a shard match.
+		return reconcile.Result{}, nil
 	}
 
 	// Always close the scope when exiting this function so we can persist any ClusterProfile
@@ -172,4 +184,28 @@ func (r *SveltosClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}).
 		Build(r)
 	return err
+}
+
+// isClusterAShardMatch checks if cluster is matching this addon-controller deployment shard.
+func (r *SveltosClusterReconciler) isClusterAShardMatch(ctx context.Context,
+	sveltosCluster *libsveltosv1alpha1.SveltosCluster, logger logr.Logger) (bool, error) {
+
+	cluster, err := clusterproxy.GetCluster(ctx, r.Client, sveltosCluster.Namespace,
+		sveltosCluster.Name, libsveltosv1alpha1.ClusterTypeSveltos)
+	if err != nil {
+		// If Cluster does not exist anymore, make it match any shard
+		if apierrors.IsNotFound(err) {
+			return true, nil
+		}
+
+		logger.V(logs.LogDebug).Info(fmt.Sprintf("failed to get cluster: %v", err))
+		return false, err
+	}
+
+	if !sharding.IsShardAMatch(r.ShardKey, cluster) {
+		logger.V(logs.LogDebug).Info("not a shard match")
+		return false, nil
+	}
+
+	return true, nil
 }
