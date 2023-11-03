@@ -138,41 +138,53 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get scheme: %v", err))
 		sveltosClusterScope.SveltosCluster.Status.Ready = false
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+		return
 	}
 
-	c, err := clusterproxy.GetSveltosKubernetesClient(ctx, logger, r.Client, s,
+	// Get managed cluster rest.Config
+	config, err := clusterproxy.GetSveltosKubernetesRestConfig(ctx, logger, r.Client,
 		sveltosClusterScope.SveltosCluster.Namespace, sveltosClusterScope.SveltosCluster.Name)
 	if err != nil {
 		errorMessage := err.Error()
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get client: %v", err))
 		sveltosClusterScope.SveltosCluster.Status.Ready = false
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
-	} else {
-		logger.V(logs.LogInfo).Info("got client")
-		sveltosClusterScope.SveltosCluster.Status.Ready = true
-		sveltosClusterScope.SveltosCluster.Status.FailureMessage = nil
-
-		ns := &corev1.Namespace{}
-		err = c.Get(context.TODO(), types.NamespacedName{Name: "projectsveltos"}, ns)
-		if err != nil && !apierrors.IsNotFound(err) {
-			errorMessage := err.Error()
-			logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get projectsveltos namespace: %v", err))
-			sveltosClusterScope.SveltosCluster.Status.Ready = false
-			sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
-		}
-
-		currentVersion, err := utils.GetKubernetesVersion(ctx, &r.Config, logger)
-		if err != nil {
-			logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get cluster kubernetes version %v", err))
-			errorMessage := err.Error()
-			sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
-		} else {
-			sveltosClusterScope.SveltosCluster.Status.Version = currentVersion
-			logger.V(logs.LogDebug).Info(fmt.Sprintf("cluster version %s", currentVersion))
-		}
+		return
 	}
 
-	logger.V(logs.LogInfo).Info("Reconcile success")
+	// Get managed cluster client
+	var c client.Client
+	c, err = client.New(config, client.Options{Scheme: s})
+	if err != nil {
+		errorMessage := err.Error()
+		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get client: %v", err))
+		sveltosClusterScope.SveltosCluster.Status.Ready = false
+		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+		return
+	}
+
+	logger.V(logs.LogInfo).Info("got client")
+	sveltosClusterScope.SveltosCluster.Status.Ready = true
+	sveltosClusterScope.SveltosCluster.Status.FailureMessage = nil
+
+	ns := &corev1.Namespace{}
+	err = c.Get(context.TODO(), types.NamespacedName{Name: "projectsveltos"}, ns)
+	if err != nil && !apierrors.IsNotFound(err) {
+		errorMessage := err.Error()
+		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get projectsveltos namespace: %v", err))
+		sveltosClusterScope.SveltosCluster.Status.Ready = false
+		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+	}
+
+	currentVersion, err := utils.GetKubernetesVersion(ctx, config, logger)
+	if err != nil {
+		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get cluster kubernetes version %v", err))
+		errorMessage := err.Error()
+		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+	} else {
+		sveltosClusterScope.SveltosCluster.Status.Version = currentVersion
+		logger.V(logs.LogDebug).Info(fmt.Sprintf("cluster version %s", currentVersion))
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.
