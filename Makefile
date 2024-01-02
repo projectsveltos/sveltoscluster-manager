@@ -160,7 +160,7 @@ endif
 CONTROL_CLUSTER_NAME ?= sveltos-management
 
 .PHONY: test
-test: manifests generate fmt vet $(SETUP_ENVTEST) ## Run uts.
+test:| check-manifests manifests generate fmt vet $(SETUP_ENVTEST) ## Run uts.
 	KUBEBUILDER_ASSETS="$(KUBEBUILDER_ASSETS)" go test $(shell go list ./... |grep -v test/fv |grep -v test/helpers) $(TEST_ARGS) -coverprofile cover.out 
 
 set-manifest-image:
