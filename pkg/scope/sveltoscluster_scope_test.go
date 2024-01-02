@@ -19,11 +19,12 @@ package scope_test
 import (
 	"context"
 
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/klog/v2/klogr"
+	"k8s.io/klog/v2/textlogger"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -36,8 +37,10 @@ const sveltosClusterNamePrefix = "scope-"
 var _ = Describe("SveltosClusterScope", func() {
 	var sveltosCluster *libsveltosv1alpha1.SveltosCluster
 	var c client.Client
+	var logger logr.Logger
 
 	BeforeEach(func() {
+		logger = textlogger.NewLogger(textlogger.NewConfig(textlogger.Verbosity(1)))
 		sveltosCluster = &libsveltosv1alpha1.SveltosCluster{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      sveltosClusterNamePrefix + randomString(),
@@ -52,7 +55,7 @@ var _ = Describe("SveltosClusterScope", func() {
 	It("Return nil,error if SveltosCluster is not specified", func() {
 		params := scope.SveltosClusterScopeParams{
 			Client: c,
-			Logger: klogr.New(),
+			Logger: logger,
 		}
 
 		scope, err := scope.NewSveltosClusterScope(params)
@@ -63,7 +66,7 @@ var _ = Describe("SveltosClusterScope", func() {
 	It("Return nil,error if client is not specified", func() {
 		params := scope.SveltosClusterScopeParams{
 			SveltosCluster: sveltosCluster,
-			Logger:         klogr.New(),
+			Logger:         logger,
 		}
 
 		scope, err := scope.NewSveltosClusterScope(params)
@@ -75,7 +78,7 @@ var _ = Describe("SveltosClusterScope", func() {
 		params := scope.SveltosClusterScopeParams{
 			Client:         c,
 			SveltosCluster: sveltosCluster,
-			Logger:         klogr.New(),
+			Logger:         logger,
 		}
 
 		scope, err := scope.NewSveltosClusterScope(params)
