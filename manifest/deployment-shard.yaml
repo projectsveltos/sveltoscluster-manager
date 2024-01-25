@@ -25,7 +25,7 @@ spec:
         - --v=5
         command:
         - /manager
-        image: projectsveltos/sveltoscluster-manager-amd64:v0.22.0
+        image: projectsveltos/sveltoscluster-manager-amd64:main
         livenessProbe:
           httpGet:
             path: /healthz
