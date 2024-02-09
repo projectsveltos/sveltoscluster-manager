@@ -154,7 +154,7 @@ endif
 # K8S_VERSION for the Kind cluster can be set as environment variable. If not defined,
 # this default value is used
 ifndef K8S_VERSION
-K8S_VERSION := v1.28.0
+K8S_VERSION := v1.29.1
 endif
 
 CONTROL_CLUSTER_NAME ?= sveltos-management
