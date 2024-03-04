@@ -45,7 +45,7 @@ import (
 const (
 	// normalRequeueAfter is how long to wait before checking again to see if the cluster can be moved
 	// to ready after or workload features (for instance ingress or reporter) have failed
-	normalRequeueAfter = 60 * time.Second
+	normalRequeueAfter = 10 * time.Second
 )
 
 // SveltosClusterReconciler reconciles a SveltosCluster object
