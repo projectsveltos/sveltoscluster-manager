@@ -24,7 +24,7 @@ spec:
         - --v=5
         command:
         - /manager
-        image: projectsveltos/sveltoscluster-manager-amd64:dev
+        image: projectsveltos/sveltoscluster-manager-amd64:v0.26.0
         livenessProbe:
           failureThreshold: 3
           httpGet:
