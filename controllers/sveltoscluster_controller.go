@@ -174,16 +174,16 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get projectsveltos namespace: %v", err))
 		sveltosClusterScope.SveltosCluster.Status.Ready = false
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
-	}
-
-	currentVersion, err := utils.GetKubernetesVersion(ctx, config, logger)
-	if err != nil {
-		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get cluster kubernetes version %v", err))
-		errorMessage := err.Error()
-		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 	} else {
-		sveltosClusterScope.SveltosCluster.Status.Version = currentVersion
-		logger.V(logs.LogDebug).Info(fmt.Sprintf("cluster version %s", currentVersion))
+		currentVersion, err := utils.GetKubernetesVersion(ctx, config, logger)
+		if err != nil {
+			logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get cluster kubernetes version %v", err))
+			errorMessage := err.Error()
+			sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+		} else {
+			sveltosClusterScope.SveltosCluster.Status.Version = currentVersion
+			logger.V(logs.LogDebug).Info(fmt.Sprintf("cluster version %s", currentVersion))
+		}
 	}
 }
 
