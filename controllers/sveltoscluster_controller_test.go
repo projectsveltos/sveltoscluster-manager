@@ -18,22 +18,30 @@ package controllers_test
 
 import (
 	"context"
+	"time"
 
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2/textlogger"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	libsveltosv1alpha1 "github.com/projectsveltos/libsveltos/api/v1alpha1"
+	"github.com/projectsveltos/sveltoscluster-manager/controllers"
+	"github.com/projectsveltos/sveltoscluster-manager/pkg/scope"
 )
 
 var _ = Describe("SveltosCluster: Reconciler", func() {
 	var sveltosCluster *libsveltosv1alpha1.SveltosCluster
+	var logger logr.Logger
 
 	BeforeEach(func() {
 		sveltosCluster = getSveltosClusterInstance(randomString(), randomString())
+		logger = textlogger.NewLogger(textlogger.NewConfig(textlogger.Verbosity(1)))
 	})
 
 	It("reconcile set status to ready", func() {
@@ -82,6 +90,57 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 				currentSveltosCluster.Status.Ready
 		}, timeout, pollingInterval).Should(BeTrue())
 	})
+
+	It("shouldRenewTokenRequest returns true when enough time has passed since last TokenRequest renewal", func() {
+		sveltosCluster.Spec.TokenRequestRenewalOption = &libsveltosv1alpha1.TokenRequestRenewalOption{
+			RenewTokenRequestInterval: metav1.Duration{Duration: time.Minute},
+		}
+
+		initObjects := []client.Object{
+			sveltosCluster,
+		}
+
+		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(initObjects...).WithObjects(initObjects...).Build()
+
+		reconciler := getClusterProfileReconciler(c)
+
+		sveltosClusterName := client.ObjectKey{
+			Name:      sveltosCluster.Name,
+			Namespace: sveltosCluster.Namespace,
+		}
+
+		now := time.Now()
+		now = now.Add(-time.Hour)
+
+		currentSveltosCluster := &libsveltosv1alpha1.SveltosCluster{}
+		Expect(c.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)).To(Succeed())
+		currentSveltosCluster.Status.LastReconciledTokenRequestAt = now.Format(time.RFC3339)
+		Expect(c.Status().Update(context.TODO(), currentSveltosCluster)).To(Succeed())
+
+		sveltosClusterScope, err := scope.NewSveltosClusterScope(scope.SveltosClusterScopeParams{
+			Client:         testEnv.Client,
+			SveltosCluster: currentSveltosCluster,
+			ControllerName: randomString(),
+			Logger:         logger,
+		})
+		Expect(err).To(BeNil())
+
+		// last renewal time was set by test to an hour ago. Because RenewTokenRequestInterval is set to a minute
+		// expect a renewal is needed
+		Expect(controllers.ShouldRenewTokenRequest(reconciler, sveltosClusterScope, logger)).To(BeTrue())
+
+		now = time.Now()
+		Expect(c.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)).To(Succeed())
+		currentSveltosCluster.Status.LastReconciledTokenRequestAt = now.Format(time.RFC3339)
+		Expect(c.Status().Update(context.TODO(), currentSveltosCluster)).To(Succeed())
+
+		sveltosClusterScope.SveltosCluster = currentSveltosCluster
+
+		// last renewal time was set by test to just now. Because RenewTokenRequestInterval is set to a minute
+		// expect a renewal is not needed
+		Expect(controllers.ShouldRenewTokenRequest(reconciler, sveltosClusterScope, logger)).To(BeFalse())
+	})
+
 })
 
 func getSveltosClusterInstance(namespace, name string) *libsveltosv1alpha1.SveltosCluster {

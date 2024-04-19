@@ -64,10 +64,12 @@ GOIMPORTS := $(TOOLS_BIN_DIR)/goimports
 GOLANGCI_LINT := $(TOOLS_BIN_DIR)/golangci-lint
 GINKGO := $(TOOLS_BIN_DIR)/ginkgo
 SETUP_ENVTEST := $(TOOLS_BIN_DIR)/setup_envs
+CLUSTERCTL := $(TOOLS_BIN_DIR)/clusterctl
 KIND := $(TOOLS_BIN_DIR)/kind
 KUBECTL := $(TOOLS_BIN_DIR)/kubectl
 
 GOLANGCI_LINT_VERSION := "v1.55.2"
+CLUSTERCTL_VERSION := "v1.7.0"
 
 KUSTOMIZE_VER := v4.5.2
 KUSTOMIZE_BIN := kustomize
@@ -106,6 +108,10 @@ $(GINKGO): $(TOOLS_DIR)/go.mod
 $(KIND): $(TOOLS_DIR)/go.mod
 	cd $(TOOLS_DIR) && $(GOBUILD) -tags tools -o $(subst $(TOOLS_DIR)/hack/tools/,,$@) sigs.k8s.io/kind
 
+$(CLUSTERCTL): $(TOOLS_DIR)/go.mod ## Build clusterctl binary
+	curl -L https://github.com/kubernetes-sigs/cluster-api/releases/download/$(CLUSTERCTL_VERSION)/clusterctl-$(OS)-$(ARCH) -o $@
+	chmod +x $@
+
 $(KUBECTL):
 	curl -L https://storage.googleapis.com/kubernetes-release/release/$(K8S_LATEST_VER)/bin/$(OS)/$(ARCH)/kubectl -o $@
 	chmod +x $@
@@ -130,7 +136,6 @@ manifests: $(CONTROLLER_GEN) $(KUSTOMIZE) $(ENVSUBST) fmt generate ## Generate W
 
 .PHONY: generate
 generate: $(CONTROLLER_GEN) ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
-	go generate
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
 
 .PHONY: fmt
@@ -190,8 +195,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	go generate
-	docker build --build-arg BUILDOS=linux --build-arg TARGETARCH=amd64 -t $(CONTROLLER_IMG):$(TAG) .
+	docker build --load --build-arg BUILDOS=linux --build-arg TARGETARCH=amd64 -t $(CONTROLLER_IMG):$(TAG) .
 	MANIFEST_IMG=$(CONTROLLER_IMG) MANIFEST_TAG=$(TAG) $(MAKE) set-manifest-image
 	$(MAKE) set-manifest-pull-policy
 
@@ -230,3 +234,86 @@ deploy: manifests $(KUSTOMIZE) $(KUBECTL) ## Deploy controller to the K8s cluste
 .PHONY: undeploy
 undeploy: s $(KUSTOMIZE) ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/default | kubectl delete --ignore-not-found=$(ignore-not-found) -f -
+
+
+## fv
+KIND_CONFIG ?= kind-cluster.yaml
+CONTROL_CLUSTER_NAME ?= sveltos-management
+WORKLOAD_CLUSTER_NAME ?= clusterapi-workload
+TIMEOUT ?= 10m
+KIND_CLUSTER_YAML ?= test/$(WORKLOAD_CLUSTER_NAME).yaml
+NUM_NODES ?= 1
+
+.PHONY: kind-test
+kind-test: test create-cluster fv ## Build docker image; start kind cluster; load docker image; install all cluster api components and run fv
+
+.PHONY: fv
+fv: $(KUBECTL) $(GINKGO) ## Run Sveltos Controller tests using existing cluster
+	cd test/fv; $(GINKGO) -nodes $(NUM_NODES) --label-filter='FV' --v --trace --randomize-all
+
+
+.PHONY: create-cluster
+create-cluster: $(KIND) $(CLUSTERCTL)  $(KUBECTL) $(ENVSUBST) ## Create a new kind cluster designed for development
+	$(MAKE) create-control-cluster
+
+	@echo "Start projectsveltos"
+	$(MAKE) deploy-projectsveltos
+
+	$(MAKE) create-workload-cluster
+
+.PHONY: delete-cluster
+delete-cluster: $(KIND) ## Deletes the kind clusters
+	$(KIND) delete cluster --name $(CONTROL_CLUSTER_NAME)
+	$(KIND) delete cluster --name $(WORKLOAD_CLUSTER_NAME)
+
+
+create-control-cluster: $(KIND) $(CLUSTERCTL) $(KUBECTL)
+	sed -e "s/K8S_VERSION/$(K8S_VERSION)/g"  test/$(KIND_CONFIG) > test/$(KIND_CONFIG).tmp
+	$(KIND) create cluster --name=$(CONTROL_CLUSTER_NAME) --config test/$(KIND_CONFIG).tmp
+	@echo "Create control cluster with docker as infrastructure provider"
+	CLUSTER_TOPOLOGY=true $(CLUSTERCTL) init --core cluster-api --bootstrap kubeadm --control-plane kubeadm --infrastructure docker
+
+	@echo wait for capd-system pod
+	$(KUBECTL) wait --for=condition=Available deployment/capd-controller-manager -n capd-system --timeout=$(TIMEOUT)
+	$(KUBECTL) wait --for=condition=Available deployment/capi-kubeadm-control-plane-controller-manager -n capi-kubeadm-control-plane-system --timeout=$(TIMEOUT)
+	$(KUBECTL) wait --for=condition=Available deployment/capi-kubeadm-bootstrap-controller-manager -n capi-kubeadm-bootstrap-system --timeout=$(TIMEOUT)
+
+	@echo "sleep allowing webhook to be ready"
+	sleep 10
+
+create-workload-cluster: $(KIND) $(KUBECTL)
+	@echo "Create a workload cluster"
+	$(KUBECTL) apply -f $(KIND_CLUSTER_YAML)
+
+	@echo "wait for cluster to be provisioned"
+	$(KUBECTL) wait cluster $(WORKLOAD_CLUSTER_NAME) -n default --for=jsonpath='{.status.phase}'=Provisioned --timeout=$(TIMEOUT)
+
+	@echo "sleep allowing control plane to be ready"
+	sleep 100
+
+	@echo "get kubeconfig to access workload cluster"
+	$(KIND) get kubeconfig --name $(WORKLOAD_CLUSTER_NAME) > test/fv/workload_kubeconfig
+
+	@echo "install calico on workload cluster"
+	$(KUBECTL) --kubeconfig=./test/fv/workload_kubeconfig apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.0/manifests/calico.yaml
+
+	@echo wait for calico pod
+	$(KUBECTL) --kubeconfig=./test/fv/workload_kubeconfig wait --for=condition=Available deployment/calico-kube-controllers -n kube-system --timeout=$(TIMEOUT)
+
+
+deploy-projectsveltos: $(KUSTOMIZE)
+	# Load projectsveltos image into cluster
+	@echo 'Load projectsveltos image into cluster'
+	$(MAKE) load-image
+
+	@echo 'Install libsveltos CRDs'
+	$(KUBECTL) apply -f https://raw.githubusercontent.com/projectsveltos/libsveltos/$(TAG)/config/crd/bases/lib.projectsveltos.io_debuggingconfigurations.yaml
+	$(KUBECTL) apply -f https://raw.githubusercontent.com/projectsveltos/libsveltos/$(TAG)/config/crd/bases/lib.projectsveltos.io_sveltosclusters.yaml
+
+	# Install projectsveltos sveltoscluster-manager components
+	@echo 'Install projectsveltos sveltoscluster-manager components'
+	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
+	$(KUSTOMIZE) build config/default | $(ENVSUBST) | $(KUBECTL) apply -f-
+
+	@echo "Waiting for projectsveltos sveltoscluster-manager to be available..."
+	$(KUBECTL) wait --for=condition=Available deployment/sc-manager -n projectsveltos --timeout=$(TIMEOUT)
