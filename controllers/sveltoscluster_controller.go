@@ -40,7 +40,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	libsveltosv1alpha1 "github.com/projectsveltos/libsveltos/api/v1alpha1"
+	libsveltosv1beta1 "github.com/projectsveltos/libsveltos/api/v1beta1"
 	"github.com/projectsveltos/libsveltos/lib/clusterproxy"
 	logs "github.com/projectsveltos/libsveltos/lib/logsettings"
 	"github.com/projectsveltos/libsveltos/lib/sharding"
@@ -74,7 +74,7 @@ func (r *SveltosClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	logger.V(logs.LogInfo).Info("Reconciling")
 
 	// Fecth the sveltosCluster instance
-	sveltosCluster := &libsveltosv1alpha1.SveltosCluster{}
+	sveltosCluster := &libsveltosv1beta1.SveltosCluster{}
 	if err := r.Get(ctx, req.NamespacedName, sveltosCluster); err != nil {
 		if apierrors.IsNotFound(err) {
 			return reconcile.Result{}, nil
@@ -203,7 +203,7 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 // SetupWithManager sets up the controller with the Manager.
 func (r *SveltosClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	_, err := ctrl.NewControllerManagedBy(mgr).
-		For(&libsveltosv1alpha1.SveltosCluster{}).
+		For(&libsveltosv1beta1.SveltosCluster{}).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: r.ConcurrentReconciles,
 		}).
@@ -213,10 +213,10 @@ func (r *SveltosClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // isClusterAShardMatch checks if cluster is matching this addon-controller deployment shard.
 func (r *SveltosClusterReconciler) isClusterAShardMatch(ctx context.Context,
-	sveltosCluster *libsveltosv1alpha1.SveltosCluster, logger logr.Logger) (bool, error) {
+	sveltosCluster *libsveltosv1beta1.SveltosCluster, logger logr.Logger) (bool, error) {
 
 	cluster, err := clusterproxy.GetCluster(ctx, r.Client, sveltosCluster.Namespace,
-		sveltosCluster.Name, libsveltosv1alpha1.ClusterTypeSveltos)
+		sveltosCluster.Name, libsveltosv1beta1.ClusterTypeSveltos)
 	if err != nil {
 		// If Cluster does not exist anymore, make it match any shard
 		if apierrors.IsNotFound(err) {

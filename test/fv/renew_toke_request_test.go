@@ -26,7 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	libsveltosv1alpha1 "github.com/projectsveltos/libsveltos/api/v1alpha1"
+	libsveltosv1beta1 "github.com/projectsveltos/libsveltos/api/v1beta1"
 )
 
 var _ = Describe("Renew TokenRequest", func() {
@@ -37,7 +37,7 @@ var _ = Describe("Renew TokenRequest", func() {
 		// secret with Kubeconfig) every minute
 
 		By("Verify SveltosCluster")
-		currentSveltosCluster := &libsveltosv1alpha1.SveltosCluster{}
+		currentSveltosCluster := &libsveltosv1beta1.SveltosCluster{}
 		Expect(k8sClient.Get(context.TODO(),
 			types.NamespacedName{Namespace: kindWorkloadCluster.Namespace, Name: kindWorkloadCluster.Name},
 			currentSveltosCluster)).To(Succeed())
