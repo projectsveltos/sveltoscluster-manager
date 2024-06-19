@@ -30,13 +30,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	libsveltosv1alpha1 "github.com/projectsveltos/libsveltos/api/v1alpha1"
+	libsveltosv1beta1 "github.com/projectsveltos/libsveltos/api/v1beta1"
 	"github.com/projectsveltos/sveltoscluster-manager/controllers"
 	"github.com/projectsveltos/sveltoscluster-manager/pkg/scope"
 )
 
 var _ = Describe("SveltosCluster: Reconciler", func() {
-	var sveltosCluster *libsveltosv1alpha1.SveltosCluster
+	var sveltosCluster *libsveltosv1beta1.SveltosCluster
 	var logger logr.Logger
 
 	BeforeEach(func() {
@@ -84,7 +84,7 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 		Expect(err).ToNot(HaveOccurred())
 
 		Eventually(func() bool {
-			currentSveltosCluster := &libsveltosv1alpha1.SveltosCluster{}
+			currentSveltosCluster := &libsveltosv1beta1.SveltosCluster{}
 			err := testEnv.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)
 			return err == nil &&
 				currentSveltosCluster.Status.Ready
@@ -92,7 +92,7 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 	})
 
 	It("shouldRenewTokenRequest returns true when enough time has passed since last TokenRequest renewal", func() {
-		sveltosCluster.Spec.TokenRequestRenewalOption = &libsveltosv1alpha1.TokenRequestRenewalOption{
+		sveltosCluster.Spec.TokenRequestRenewalOption = &libsveltosv1beta1.TokenRequestRenewalOption{
 			RenewTokenRequestInterval: metav1.Duration{Duration: time.Minute},
 		}
 
@@ -112,7 +112,7 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 		now := time.Now()
 		now = now.Add(-time.Hour)
 
-		currentSveltosCluster := &libsveltosv1alpha1.SveltosCluster{}
+		currentSveltosCluster := &libsveltosv1beta1.SveltosCluster{}
 		Expect(c.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)).To(Succeed())
 		currentSveltosCluster.Status.LastReconciledTokenRequestAt = now.Format(time.RFC3339)
 		Expect(c.Status().Update(context.TODO(), currentSveltosCluster)).To(Succeed())
@@ -143,8 +143,8 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 
 })
 
-func getSveltosClusterInstance(namespace, name string) *libsveltosv1alpha1.SveltosCluster {
-	return &libsveltosv1alpha1.SveltosCluster{
+func getSveltosClusterInstance(namespace, name string) *libsveltosv1beta1.SveltosCluster {
+	return &libsveltosv1beta1.SveltosCluster{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,

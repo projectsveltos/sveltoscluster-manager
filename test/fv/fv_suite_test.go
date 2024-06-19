@@ -43,7 +43,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	libsveltosv1alpha1 "github.com/projectsveltos/libsveltos/api/v1alpha1"
+	libsveltosv1beta1 "github.com/projectsveltos/libsveltos/api/v1beta1"
 	"github.com/projectsveltos/libsveltos/lib/clusterproxy"
 )
 
@@ -97,7 +97,7 @@ var _ = BeforeSuite(func() {
 
 	Expect(clientgoscheme.AddToScheme(scheme)).To(Succeed())
 	Expect(clusterv1.AddToScheme(scheme)).To(Succeed())
-	Expect(libsveltosv1alpha1.AddToScheme(scheme)).To(Succeed())
+	Expect(libsveltosv1beta1.AddToScheme(scheme)).To(Succeed())
 
 	var err error
 	k8sClient, err = client.New(restConfig, client.Options{Scheme: scheme})
@@ -284,13 +284,13 @@ func createSecretForSveltosClusterWithKubeconfig(sveltosClusterNamespace, svelto
 }
 
 func createSveltosCluster(sveltosClusterNamespace, sveltosClusterName string) {
-	sveltosCluster := &libsveltosv1alpha1.SveltosCluster{
+	sveltosCluster := &libsveltosv1beta1.SveltosCluster{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: sveltosClusterNamespace,
 			Name:      sveltosClusterName,
 		},
-		Spec: libsveltosv1alpha1.SveltosClusterSpec{
-			TokenRequestRenewalOption: &libsveltosv1alpha1.TokenRequestRenewalOption{
+		Spec: libsveltosv1beta1.SveltosClusterSpec{
+			TokenRequestRenewalOption: &libsveltosv1beta1.TokenRequestRenewalOption{
 				RenewTokenRequestInterval: metav1.Duration{Duration: time.Minute},
 			},
 		},
@@ -328,7 +328,7 @@ func waitForClusterMachineToBeReady() {
 func getManagedClusterRestConfig(workloadCluster *clusterv1.Cluster) *rest.Config {
 	logger := textlogger.NewLogger(textlogger.NewConfig(textlogger.Verbosity(1)))
 	remoteRestConfig, err := clusterproxy.GetKubernetesRestConfig(context.TODO(), k8sClient,
-		workloadCluster.Namespace, workloadCluster.Name, "", "", libsveltosv1alpha1.ClusterTypeCapi,
+		workloadCluster.Namespace, workloadCluster.Name, "", "", libsveltosv1beta1.ClusterTypeCapi,
 		logger)
 	Expect(err).To(BeNil())
 	return remoteRestConfig
