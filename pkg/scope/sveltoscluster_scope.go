@@ -90,3 +90,12 @@ func (s *SveltosClusterScope) Name() string {
 func (s *SveltosClusterScope) ControllerName() string {
 	return s.controllerName
 }
+
+// SetLabel add label key:value
+func (s *SveltosClusterScope) SetLabel(key, value string) {
+	if s.SveltosCluster.Labels == nil {
+		s.SveltosCluster.Labels = make(map[string]string)
+	}
+
+	s.SveltosCluster.Labels[key] = value
+}

@@ -92,4 +92,28 @@ var _ = Describe("SveltosClusterScope", func() {
 			currentSveltosCluster)).To(Succeed())
 		Expect(currentSveltosCluster.Status.Ready).ToNot(BeTrue())
 	})
+
+	It("SetLabel sets/updates labels", func() {
+		params := scope.SveltosClusterScopeParams{
+			Client:         c,
+			SveltosCluster: sveltosCluster,
+			Logger:         logger,
+		}
+
+		scope, err := scope.NewSveltosClusterScope(params)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(scope).ToNot(BeNil())
+
+		key := randomString()
+		value := randomString()
+
+		scope.SetLabel(key, value)
+		Expect(scope.SveltosCluster.Labels).ToNot(BeNil())
+		Expect(scope.SveltosCluster.Labels[key]).To(Equal(value))
+
+		value = randomString()
+		scope.SetLabel(key, value)
+		Expect(scope.SveltosCluster.Labels).ToNot(BeNil())
+		Expect(scope.SveltosCluster.Labels[key]).To(Equal(value))
+	})
 })

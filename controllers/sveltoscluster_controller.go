@@ -52,6 +52,8 @@ const (
 	// normalRequeueAfter is how long to wait before checking again to see if the cluster can be moved
 	// to ready after or workload features (for instance ingress or reporter) have failed
 	normalRequeueAfter = 10 * time.Second
+
+	versionLabel = "projectsveltos.io/version"
 )
 
 // SveltosClusterReconciler reconciles a SveltosCluster object
@@ -65,7 +67,6 @@ type SveltosClusterReconciler struct {
 
 //+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=sveltosclusters,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=sveltosclusters/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=sveltosclusters/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;update
 //+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=debuggingconfigurations,verbs=get;list;watch
 
@@ -187,6 +188,7 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 			errorMessage := err.Error()
 			sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 		} else {
+			sveltosClusterScope.SetLabel(versionLabel, currentVersion)
 			sveltosClusterScope.SveltosCluster.Status.Version = currentVersion
 			logger.V(logs.LogDebug).Info(fmt.Sprintf("cluster version %s", currentVersion))
 			if r.shouldRenewTokenRequest(sveltosClusterScope, logger) {
