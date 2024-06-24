@@ -3,6 +3,7 @@ module github.com/projectsveltos/sveltoscluster-manager
 go 1.22.0
 
 require (
+	github.com/Masterminds/semver v1.5.0
 	github.com/TwiN/go-color v1.4.1
 	github.com/go-logr/logr v1.4.2
 	github.com/onsi/ginkgo/v2 v2.19.0
