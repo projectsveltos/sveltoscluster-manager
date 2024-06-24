@@ -53,7 +53,7 @@ const (
 	// to ready after or workload features (for instance ingress or reporter) have failed
 	normalRequeueAfter = 10 * time.Second
 
-	versionLabel = "projectsveltos.io/version"
+	versionLabel = "projectsveltos.io/k8s-version"
 )
 
 // SveltosClusterReconciler reconciles a SveltosCluster object
