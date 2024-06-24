@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Masterminds/semver"
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	authenticationv1 "k8s.io/api/authentication/v1"
@@ -188,7 +189,13 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 			errorMessage := err.Error()
 			sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 		} else {
-			sveltosClusterScope.SetLabel(versionLabel, currentVersion)
+			currentSemVersion, err := semver.NewVersion(currentVersion)
+			if err != nil {
+				logger.Error(err, "failed to get semver for current version %s", currentVersion)
+			} else {
+				sveltosClusterScope.SetLabel(versionLabel,
+					fmt.Sprintf("v%d.%d.%d", currentSemVersion.Major(), currentSemVersion.Minor(), currentSemVersion.Patch()))
+			}
 			sveltosClusterScope.SveltosCluster.Status.Version = currentVersion
 			logger.V(logs.LogDebug).Info(fmt.Sprintf("cluster version %s", currentVersion))
 			if r.shouldRenewTokenRequest(sveltosClusterScope, logger) {
