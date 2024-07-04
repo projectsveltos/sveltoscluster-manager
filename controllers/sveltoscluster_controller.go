@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Masterminds/semver"
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	authenticationv1 "k8s.io/api/authentication/v1"
@@ -40,7 +41,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	libsveltosv1alpha1 "github.com/projectsveltos/libsveltos/api/v1alpha1"
+	libsveltosv1beta1 "github.com/projectsveltos/libsveltos/api/v1beta1"
 	"github.com/projectsveltos/libsveltos/lib/clusterproxy"
 	logs "github.com/projectsveltos/libsveltos/lib/logsettings"
 	"github.com/projectsveltos/libsveltos/lib/sharding"
@@ -52,6 +53,8 @@ const (
 	// normalRequeueAfter is how long to wait before checking again to see if the cluster can be moved
 	// to ready after or workload features (for instance ingress or reporter) have failed
 	normalRequeueAfter = 10 * time.Second
+
+	versionLabel = "projectsveltos.io/k8s-version"
 )
 
 // SveltosClusterReconciler reconciles a SveltosCluster object
@@ -65,7 +68,6 @@ type SveltosClusterReconciler struct {
 
 //+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=sveltosclusters,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=sveltosclusters/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=sveltosclusters/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;update
 //+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=debuggingconfigurations,verbs=get;list;watch
 
@@ -74,7 +76,7 @@ func (r *SveltosClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	logger.V(logs.LogInfo).Info("Reconciling")
 
 	// Fecth the sveltosCluster instance
-	sveltosCluster := &libsveltosv1alpha1.SveltosCluster{}
+	sveltosCluster := &libsveltosv1beta1.SveltosCluster{}
 	if err := r.Get(ctx, req.NamespacedName, sveltosCluster); err != nil {
 		if apierrors.IsNotFound(err) {
 			return reconcile.Result{}, nil
@@ -187,6 +189,13 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 			errorMessage := err.Error()
 			sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 		} else {
+			currentSemVersion, err := semver.NewVersion(currentVersion)
+			if err != nil {
+				logger.Error(err, "failed to get semver for current version %s", currentVersion)
+			} else {
+				sveltosClusterScope.SetLabel(versionLabel,
+					fmt.Sprintf("v%d.%d.%d", currentSemVersion.Major(), currentSemVersion.Minor(), currentSemVersion.Patch()))
+			}
 			sveltosClusterScope.SveltosCluster.Status.Version = currentVersion
 			logger.V(logs.LogDebug).Info(fmt.Sprintf("cluster version %s", currentVersion))
 			if r.shouldRenewTokenRequest(sveltosClusterScope, logger) {
@@ -203,7 +212,7 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 // SetupWithManager sets up the controller with the Manager.
 func (r *SveltosClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	_, err := ctrl.NewControllerManagedBy(mgr).
-		For(&libsveltosv1alpha1.SveltosCluster{}).
+		For(&libsveltosv1beta1.SveltosCluster{}).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: r.ConcurrentReconciles,
 		}).
@@ -213,10 +222,10 @@ func (r *SveltosClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // isClusterAShardMatch checks if cluster is matching this addon-controller deployment shard.
 func (r *SveltosClusterReconciler) isClusterAShardMatch(ctx context.Context,
-	sveltosCluster *libsveltosv1alpha1.SveltosCluster, logger logr.Logger) (bool, error) {
+	sveltosCluster *libsveltosv1beta1.SveltosCluster, logger logr.Logger) (bool, error) {
 
 	cluster, err := clusterproxy.GetCluster(ctx, r.Client, sveltosCluster.Namespace,
-		sveltosCluster.Name, libsveltosv1alpha1.ClusterTypeSveltos)
+		sveltosCluster.Name, libsveltosv1beta1.ClusterTypeSveltos)
 	if err != nil {
 		// If Cluster does not exist anymore, make it match any shard
 		if apierrors.IsNotFound(err) {

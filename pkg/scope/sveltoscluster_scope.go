@@ -24,14 +24,14 @@ import (
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	libsveltosv1alpha1 "github.com/projectsveltos/libsveltos/api/v1alpha1"
+	libsveltosv1beta1 "github.com/projectsveltos/libsveltos/api/v1beta1"
 )
 
 // SveltosClusterScopeParams defines the input parameters used to create a new SveltosCluster Scope.
 type SveltosClusterScopeParams struct {
 	Client         client.Client
 	Logger         logr.Logger
-	SveltosCluster *libsveltosv1alpha1.SveltosCluster
+	SveltosCluster *libsveltosv1beta1.SveltosCluster
 	ControllerName string
 }
 
@@ -63,7 +63,7 @@ type SveltosClusterScope struct {
 	logr.Logger
 	client         client.Client
 	patchHelper    *patch.Helper
-	SveltosCluster *libsveltosv1alpha1.SveltosCluster
+	SveltosCluster *libsveltosv1beta1.SveltosCluster
 	controllerName string
 }
 
@@ -89,4 +89,13 @@ func (s *SveltosClusterScope) Name() string {
 // created the SveltosClusterScope.
 func (s *SveltosClusterScope) ControllerName() string {
 	return s.controllerName
+}
+
+// SetLabel add label key:value
+func (s *SveltosClusterScope) SetLabel(key, value string) {
+	if s.SveltosCluster.Labels == nil {
+		s.SveltosCluster.Labels = make(map[string]string)
+	}
+
+	s.SveltosCluster.Labels[key] = value
 }

@@ -28,20 +28,20 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	libsveltosv1alpha1 "github.com/projectsveltos/libsveltos/api/v1alpha1"
+	libsveltosv1beta1 "github.com/projectsveltos/libsveltos/api/v1beta1"
 	"github.com/projectsveltos/sveltoscluster-manager/pkg/scope"
 )
 
 const sveltosClusterNamePrefix = "scope-"
 
 var _ = Describe("SveltosClusterScope", func() {
-	var sveltosCluster *libsveltosv1alpha1.SveltosCluster
+	var sveltosCluster *libsveltosv1beta1.SveltosCluster
 	var c client.Client
 	var logger logr.Logger
 
 	BeforeEach(func() {
 		logger = textlogger.NewLogger(textlogger.NewConfig(textlogger.Verbosity(1)))
-		sveltosCluster = &libsveltosv1alpha1.SveltosCluster{
+		sveltosCluster = &libsveltosv1beta1.SveltosCluster{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      sveltosClusterNamePrefix + randomString(),
 				Namespace: sveltosClusterNamePrefix + randomString(),
@@ -87,9 +87,33 @@ var _ = Describe("SveltosClusterScope", func() {
 
 		sveltosCluster.Status.Ready = true
 
-		currentSveltosCluster := &libsveltosv1alpha1.SveltosCluster{}
+		currentSveltosCluster := &libsveltosv1beta1.SveltosCluster{}
 		Expect(c.Get(context.TODO(), types.NamespacedName{Name: sveltosCluster.Name, Namespace: sveltosCluster.Namespace},
 			currentSveltosCluster)).To(Succeed())
 		Expect(currentSveltosCluster.Status.Ready).ToNot(BeTrue())
+	})
+
+	It("SetLabel sets/updates labels", func() {
+		params := scope.SveltosClusterScopeParams{
+			Client:         c,
+			SveltosCluster: sveltosCluster,
+			Logger:         logger,
+		}
+
+		scope, err := scope.NewSveltosClusterScope(params)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(scope).ToNot(BeNil())
+
+		key := randomString()
+		value := randomString()
+
+		scope.SetLabel(key, value)
+		Expect(scope.SveltosCluster.Labels).ToNot(BeNil())
+		Expect(scope.SveltosCluster.Labels[key]).To(Equal(value))
+
+		value = randomString()
+		scope.SetLabel(key, value)
+		Expect(scope.SveltosCluster.Labels).ToNot(BeNil())
+		Expect(scope.SveltosCluster.Labels[key]).To(Equal(value))
 	})
 })
