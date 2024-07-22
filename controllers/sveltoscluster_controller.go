@@ -144,7 +144,6 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 	if err := clientgoscheme.AddToScheme(s); err != nil {
 		errorMessage := err.Error()
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get scheme: %v", err))
-		sveltosClusterScope.SveltosCluster.Status.Ready = false
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 		return
 	}
@@ -155,7 +154,6 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 	if err != nil {
 		errorMessage := err.Error()
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get client: %v", err))
-		sveltosClusterScope.SveltosCluster.Status.Ready = false
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 		return
 	}
@@ -166,7 +164,6 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 	if err != nil {
 		errorMessage := err.Error()
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get client: %v", err))
-		sveltosClusterScope.SveltosCluster.Status.Ready = false
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 		return
 	}
@@ -180,7 +177,6 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 	if err != nil && !apierrors.IsNotFound(err) {
 		errorMessage := err.Error()
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get projectsveltos namespace: %v", err))
-		sveltosClusterScope.SveltosCluster.Status.Ready = false
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 	} else {
 		currentVersion, err := utils.GetKubernetesVersion(ctx, config, logger)
