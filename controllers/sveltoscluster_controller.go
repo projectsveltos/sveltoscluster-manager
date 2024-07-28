@@ -25,6 +25,7 @@ import (
 	"github.com/Masterminds/semver"
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
+	"github.com/robfig/cron/v3"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -203,6 +204,8 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 			}
 		}
 	}
+
+	handleAutomaticPauseUnPause(sveltosClusterScope.SveltosCluster, time.Now(), logger)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -387,4 +390,85 @@ current-context: sveltos-context`
 		base64.StdEncoding.EncodeToString(remoteConfig.CAData), serviceAccountName, token, namespace, serviceAccountName)
 
 	return data
+}
+
+func handleAutomaticPauseUnPause(sveltosCluster *libsveltosv1beta1.SveltosCluster,
+	currentTime time.Time, logger logr.Logger) {
+
+	if sveltosCluster.Spec.ActiveWindow == nil {
+		return
+	}
+
+	if sveltosCluster.Status.NextPause != nil && sveltosCluster.Status.NextUnpause != nil {
+		if currentTime.After(sveltosCluster.Status.NextUnpause.Time) &&
+			currentTime.Before(sveltosCluster.Status.NextPause.Time) {
+
+			sveltosCluster.Spec.Paused = false
+			return
+		} else if currentTime.Before(sveltosCluster.Status.NextUnpause.Time) {
+			sveltosCluster.Spec.Paused = true
+			return
+		} else if currentTime.After(sveltosCluster.Status.NextPause.Time) {
+			sveltosCluster.Spec.Paused = true
+		} else if currentTime.Before(sveltosCluster.Status.NextPause.Time) {
+			// Updates NextFrom and NextTo only once current time is past NextTo
+			return
+		}
+	} else {
+		sveltosCluster.Spec.Paused = true
+	}
+
+	if sveltosCluster.Status.NextUnpause == nil || currentTime.After(sveltosCluster.Status.NextUnpause.Time) {
+		lastRunTime := sveltosCluster.CreationTimestamp
+		if sveltosCluster.Status.NextUnpause != nil {
+			lastRunTime = *sveltosCluster.Status.NextUnpause
+		}
+
+		nextFromTime, err := getNextScheduleTime(sveltosCluster.Spec.ActiveWindow.From, &lastRunTime, currentTime)
+		if err != nil {
+			logger.V(logs.LogInfo).Error(err, "failed to get next from time")
+			return
+		}
+		sveltosCluster.Status.NextUnpause = &metav1.Time{Time: *nextFromTime}
+	}
+
+	if sveltosCluster.Status.NextPause == nil || currentTime.After(sveltosCluster.Status.NextPause.Time) {
+		lastRunTime := sveltosCluster.CreationTimestamp
+		if sveltosCluster.Status.NextPause != nil {
+			lastRunTime = *sveltosCluster.Status.NextPause
+		}
+
+		nextToTime, err := getNextScheduleTime(sveltosCluster.Spec.ActiveWindow.To, &lastRunTime, currentTime)
+		if err != nil {
+			logger.V(logs.LogInfo).Error(err, "failed to get next to time")
+		}
+
+		sveltosCluster.Status.NextPause = &metav1.Time{Time: *nextToTime}
+	}
+}
+
+// getNextScheduleTime gets the time of next schedule after last scheduled and before now
+func getNextScheduleTime(schedule string, lastRunTime *metav1.Time, now time.Time) (*time.Time, error) {
+	sched, err := cron.ParseStandard(schedule)
+	if err != nil {
+		return nil, fmt.Errorf("unparseable schedule %q: %w", schedule, err)
+	}
+
+	if lastRunTime == nil {
+		return nil, fmt.Errorf("last run time must be specified")
+	}
+
+	starts := 0
+	for t := sched.Next(lastRunTime.Time); t.Before(now); t = sched.Next(t) {
+		const maxNumberOfFailures = 100
+		starts++
+		if starts > maxNumberOfFailures {
+			return nil,
+				fmt.Errorf("too many missed start times (> %d). Set or check clock skew",
+					maxNumberOfFailures)
+		}
+	}
+
+	next := sched.Next(now)
+	return &next, nil
 }

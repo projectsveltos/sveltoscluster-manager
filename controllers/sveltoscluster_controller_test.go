@@ -141,6 +141,56 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 		Expect(controllers.ShouldRenewTokenRequest(reconciler, sveltosClusterScope, logger)).To(BeFalse())
 	})
 
+	It("handleAutomaticPauseUnPause updates Spec.Paused based on Spec.Schedule", func() {
+		sveltosCluster.Spec.ActiveWindow = &libsveltosv1beta1.ActiveWindow{
+			From: "0 20 * * 5", // every friday 8PM
+			To:   "0 7 * * 1",  // every monday 7AM
+		}
+		loc, err := time.LoadLocation("Europe/Rome") // Replace with your desired time zone
+		Expect(err).To(BeNil())
+		tuesday8AM := time.Date(2024, time.July, 30, 8, 0, 0, 0, loc)
+		sveltosCluster.CreationTimestamp = metav1.Time{Time: tuesday8AM}
+
+		controllers.HandleAutomaticPauseUnPause(sveltosCluster, tuesday8AM.Add(time.Hour), logger)
+
+		// Next unpause coming friday at 8PM
+		Expect(sveltosCluster.Status.NextUnpause).ToNot(BeNil())
+		expectedUnpause := time.Date(2024, time.August, 2, 20, 0, 0, 0, loc)
+		Expect(sveltosCluster.Status.NextUnpause.Time).To(Equal(expectedUnpause))
+
+		// Next pause coming monday at 7AM
+		Expect(sveltosCluster.Status.NextPause).ToNot(BeNil())
+		expectedPause := time.Date(2024, time.August, 5, 7, 0, 0, 0, loc)
+		Expect(sveltosCluster.Status.NextPause.Time).To(Equal(expectedPause))
+
+		Expect(sveltosCluster.Spec.Paused).To(BeTrue())
+
+		// when time is before unpause, Paused will remain set to false and NextPause
+		// NextUnpause will not be updated
+		thursday8AM := time.Date(2024, time.August, 1, 8, 0, 0, 0, loc)
+		controllers.HandleAutomaticPauseUnPause(sveltosCluster, thursday8AM, logger)
+		Expect(sveltosCluster.Spec.Paused).To(BeTrue())
+		Expect(sveltosCluster.Status.NextPause.Time).To(Equal(expectedPause))
+		Expect(sveltosCluster.Status.NextUnpause.Time).To(Equal(expectedUnpause))
+
+		// when time is past unpause but before pause, Paused will be set to false and NextPause
+		// NextUnpause will not be updated
+		saturday8AM := time.Date(2024, time.August, 3, 8, 0, 0, 0, loc)
+		controllers.HandleAutomaticPauseUnPause(sveltosCluster, saturday8AM, logger)
+		Expect(sveltosCluster.Spec.Paused).To(BeFalse())
+		Expect(sveltosCluster.Status.NextPause.Time).To(Equal(expectedPause))
+		Expect(sveltosCluster.Status.NextUnpause.Time).To(Equal(expectedUnpause))
+
+		// when time is past next pause, Paused will be set to true and NextPause
+		// NextUnpause updated
+		monday8AM := time.Date(2024, time.August, 5, 8, 0, 0, 0, loc)
+		controllers.HandleAutomaticPauseUnPause(sveltosCluster, monday8AM, logger)
+		Expect(sveltosCluster.Spec.Paused).To(BeTrue())
+		expectedUnpause = time.Date(2024, time.August, 9, 20, 0, 0, 0, loc)
+		expectedPause = time.Date(2024, time.August, 12, 7, 0, 0, 0, loc)
+		Expect(sveltosCluster.Status.NextPause.Time).To(Equal(expectedPause))
+		Expect(sveltosCluster.Status.NextUnpause.Time).To(Equal(expectedUnpause))
+	})
 })
 
 func getSveltosClusterInstance(namespace, name string) *libsveltosv1beta1.SveltosCluster {

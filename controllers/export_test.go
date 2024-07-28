@@ -19,3 +19,7 @@ package controllers
 var (
 	ShouldRenewTokenRequest = (*SveltosClusterReconciler).shouldRenewTokenRequest
 )
+
+var (
+	HandleAutomaticPauseUnPause = handleAutomaticPauseUnPause
+)
