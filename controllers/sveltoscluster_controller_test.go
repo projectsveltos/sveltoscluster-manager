@@ -89,6 +89,87 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 			return err == nil &&
 				currentSveltosCluster.Status.Ready
 		}, timeout, pollingInterval).Should(BeTrue())
+
+		currentSveltosCluster := &libsveltosv1beta1.SveltosCluster{}
+		err = testEnv.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)
+		Expect(err).To(BeNil())
+		Expect(currentSveltosCluster.Status.ConnectionFailures).To(Equal(0))
+		Expect(currentSveltosCluster.Status.ConnectionStatus).To(Equal(libsveltosv1beta1.ConnectionHealthy))
+	})
+
+	It("reconcile set connection down after enough consecutive failed connection", func() {
+		ns := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: sveltosCluster.Namespace,
+			},
+		}
+
+		Expect(testEnv.Create(context.TODO(), ns)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, ns)).To(Succeed())
+
+		// Create Secret containing Kubeconfig to access SveltosCluster
+
+		sveltosSecret := corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: sveltosCluster.Namespace,
+				Name:      sveltosCluster.Name + "-sveltos-kubeconfig",
+			},
+			Data: map[string][]byte{
+				"data": []byte("not a valid kubeconfig"),
+			},
+		}
+
+		Expect(testEnv.Create(context.TODO(), &sveltosSecret)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, &sveltosSecret)).To(Succeed())
+
+		Expect(testEnv.Create(context.TODO(), sveltosCluster)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, sveltosCluster)).To(Succeed())
+
+		reconciler := getClusterProfileReconciler(testEnv.Client)
+
+		sveltosClusterName := client.ObjectKey{
+			Name:      sveltosCluster.Name,
+			Namespace: sveltosCluster.Namespace,
+		}
+		_, err := reconciler.Reconcile(context.TODO(), ctrl.Request{
+			NamespacedName: sveltosClusterName,
+		})
+		Expect(err).ToNot(HaveOccurred())
+
+		Eventually(func() bool {
+			currentSveltosCluster := &libsveltosv1beta1.SveltosCluster{}
+			err := testEnv.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)
+			return err == nil &&
+				!currentSveltosCluster.Status.Ready &&
+				currentSveltosCluster.Status.ConnectionFailures == 1
+		}, timeout, pollingInterval).Should(BeTrue())
+
+		_, err = reconciler.Reconcile(context.TODO(), ctrl.Request{
+			NamespacedName: sveltosClusterName,
+		})
+		Expect(err).ToNot(HaveOccurred())
+
+		Eventually(func() bool {
+			currentSveltosCluster := &libsveltosv1beta1.SveltosCluster{}
+			err := testEnv.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)
+			return err == nil &&
+				!currentSveltosCluster.Status.Ready &&
+				currentSveltosCluster.Status.ConnectionFailures == 2
+		}, timeout, pollingInterval).Should(BeTrue())
+
+		_, err = reconciler.Reconcile(context.TODO(), ctrl.Request{
+			NamespacedName: sveltosClusterName,
+		})
+		Expect(err).ToNot(HaveOccurred())
+
+		Eventually(func() bool {
+			currentSveltosCluster := &libsveltosv1beta1.SveltosCluster{}
+			err := testEnv.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)
+			return err == nil &&
+				!currentSveltosCluster.Status.Ready &&
+				currentSveltosCluster.Status.ConnectionFailures == 3 &&
+				currentSveltosCluster.Status.ConnectionStatus == libsveltosv1beta1.ConnectionDown
+		}, timeout, pollingInterval).Should(BeTrue())
 	})
 
 	It("shouldRenewTokenRequest returns true when enough time has passed since last TokenRequest renewal", func() {
