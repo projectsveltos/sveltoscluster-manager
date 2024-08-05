@@ -141,11 +141,14 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 	logger := sveltosClusterScope.Logger
 	logger.V(logs.LogInfo).Info("Reconciling SveltosCluster")
 
+	defer handleAutomaticPauseUnPause(sveltosClusterScope.SveltosCluster, time.Now(), logger)
+
 	s := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(s); err != nil {
 		errorMessage := err.Error()
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get scheme: %v", err))
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+		updateConnectionStatus(sveltosClusterScope, logger)
 		return
 	}
 
@@ -156,6 +159,7 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 		errorMessage := err.Error()
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get client: %v", err))
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+		updateConnectionStatus(sveltosClusterScope, logger)
 		return
 	}
 
@@ -166,6 +170,7 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 		errorMessage := err.Error()
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get client: %v", err))
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+		updateConnectionStatus(sveltosClusterScope, logger)
 		return
 	}
 
@@ -205,7 +210,21 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 		}
 	}
 
-	handleAutomaticPauseUnPause(sveltosClusterScope.SveltosCluster, time.Now(), logger)
+	updateConnectionStatus(sveltosClusterScope, logger)
+}
+
+func updateConnectionStatus(sveltosClusterScope *scope.SveltosClusterScope, logger logr.Logger) {
+	if sveltosClusterScope.SveltosCluster.Status.FailureMessage != nil {
+		logger.V(logs.LogDebug).Info("increasing connectionFailures")
+		sveltosClusterScope.SveltosCluster.Status.ConnectionFailures++
+		if sveltosClusterScope.SveltosCluster.Status.ConnectionFailures >= sveltosClusterScope.SveltosCluster.Spec.ConsecutiveFailureThreshold {
+			logger.V(logs.LogDebug).Info("connectionFailures is higher than consecutiveFailureThreshold. Set connectionStatus to down")
+			sveltosClusterScope.SveltosCluster.Status.ConnectionStatus = libsveltosv1beta1.ConnectionDown
+		}
+	} else {
+		sveltosClusterScope.SveltosCluster.Status.ConnectionStatus = libsveltosv1beta1.ConnectionHealthy
+		sveltosClusterScope.SveltosCluster.Status.ConnectionFailures = 0
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.
