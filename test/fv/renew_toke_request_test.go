@@ -55,7 +55,8 @@ var _ = Describe("Renew TokenRequest", func() {
 			if err != nil {
 				return false
 			}
-			return currentSveltosCluster.Status.Ready
+			return currentSveltosCluster.Status.Ready &&
+				currentSveltosCluster.Status.ConnectionStatus == libsveltosv1beta1.ConnectionHealthy
 		}, timeout, pollingInterval).Should(BeTrue())
 
 		// Get Secret with SveltosCluster kubeconfig
