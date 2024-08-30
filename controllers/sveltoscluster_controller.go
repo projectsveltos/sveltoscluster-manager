@@ -415,6 +415,8 @@ func handleAutomaticPauseUnPause(sveltosCluster *libsveltosv1beta1.SveltosCluste
 	currentTime time.Time, logger logr.Logger) {
 
 	if sveltosCluster.Spec.ActiveWindow == nil {
+		sveltosCluster.Status.NextUnpause = nil
+		sveltosCluster.Status.NextPause = nil
 		return
 	}
 
