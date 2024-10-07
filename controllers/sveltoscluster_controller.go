@@ -325,17 +325,22 @@ func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context
 
 		for i := range config.Contexts {
 			cc := &config.Contexts[i]
-			namespace := cc.Context.Namespace
-			user := cc.Context.AuthInfo
+			saNamespace := cc.Context.Namespace
+			saName := cc.Context.AuthInfo
 
-			tokenRequest, err := r.getServiceAccountTokenRequest(ctx, remoteConfig, namespace, user, saExpirationInSecond, logger)
+			if sveltosCluster.Spec.TokenRequestRenewalOption.SANamespace != "" && sveltosCluster.Spec.TokenRequestRenewalOption.SAName != "" {
+				saNamespace = sveltosCluster.Spec.TokenRequestRenewalOption.SANamespace
+				saName = sveltosCluster.Spec.TokenRequestRenewalOption.SAName
+			}
+
+			tokenRequest, err := r.getServiceAccountTokenRequest(ctx, remoteConfig, saNamespace, saName, saExpirationInSecond, logger)
 			if err != nil {
 				logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get tokenRequest %v", err))
 				continue
 			}
 
 			logger.V(logs.LogDebug).Info("Get Kubeconfig from TokenRequest")
-			data := r.getKubeconfigFromToken(namespace, user, tokenRequest.Token, remoteConfig)
+			data := r.getKubeconfigFromToken(saNamespace, saName, tokenRequest.Token, remoteConfig)
 			err = clusterproxy.UpdateSveltosSecretData(ctx, logger, r.Client, sveltosCluster.Namespace, sveltosCluster.Name, data)
 			if err != nil {
 				logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to update SveltosCluster's Secret %v", err))
