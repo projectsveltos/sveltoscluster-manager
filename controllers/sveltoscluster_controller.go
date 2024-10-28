@@ -340,13 +340,15 @@ func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context
 			}
 
 			logger.V(logs.LogDebug).Info("Get Kubeconfig from TokenRequest")
+			key := "re-kubeconfig"
 			data := r.getKubeconfigFromToken(saNamespace, saName, tokenRequest.Token, remoteConfig)
-			err = clusterproxy.UpdateSveltosSecretData(ctx, logger, r.Client, sveltosCluster.Namespace, sveltosCluster.Name, data)
+			err = clusterproxy.UpdateSveltosSecretData(ctx, logger, r.Client, sveltosCluster.Namespace, sveltosCluster.Name, data, key)
 			if err != nil {
 				logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to update SveltosCluster's Secret %v", err))
 				continue
 			}
 
+			sveltosCluster.Spec.KubeconfigKeyName = key
 			sveltosCluster.Status.LastReconciledTokenRequestAt = time.Now().Format(time.RFC3339)
 		}
 	}
