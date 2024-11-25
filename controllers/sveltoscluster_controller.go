@@ -195,8 +195,11 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 			if err != nil {
 				logger.Error(err, "failed to get semver for current version %s", currentVersion)
 			} else {
+				kubernetesVersion := fmt.Sprintf("v%d.%d.%d", currentSemVersion.Major(), currentSemVersion.Minor(), currentSemVersion.Patch())
 				sveltosClusterScope.SetLabel(versionLabel,
-					fmt.Sprintf("v%d.%d.%d", currentSemVersion.Major(), currentSemVersion.Minor(), currentSemVersion.Patch()))
+					kubernetesVersion)
+				updateKubernetesVersionMetric(string(libsveltosv1beta1.ClusterTypeSveltos), sveltosClusterScope.SveltosCluster.Namespace,
+					sveltosClusterScope.SveltosCluster.Name, kubernetesVersion, logger)
 			}
 			sveltosClusterScope.SveltosCluster.Status.Version = currentVersion
 			logger.V(logs.LogDebug).Info(fmt.Sprintf("cluster version %s", currentVersion))
@@ -211,6 +214,8 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 	}
 
 	updateConnectionStatus(sveltosClusterScope, logger)
+	updateClusterConnectionStatusMetric(string(libsveltosv1beta1.ClusterTypeSveltos), sveltosClusterScope.SveltosCluster.Namespace,
+		sveltosClusterScope.SveltosCluster.Name, sveltosClusterScope.SveltosCluster.Status.ConnectionStatus, logger)
 }
 
 func updateConnectionStatus(sveltosClusterScope *scope.SveltosClusterScope, logger logr.Logger) {

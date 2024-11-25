@@ -76,3 +76,20 @@ spec:
             memory: 128Mi
       serviceAccountName: manager
       terminationGracePeriodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: manager
+  namespace: projectsveltos
+  labels:
+    control-plane: sc-manager
+spec:
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 8443
+    name: metrics
+  selector:
+    control-plane: sc-manager
+  type: ClusterIP
