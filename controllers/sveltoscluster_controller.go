@@ -195,8 +195,11 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 			if err != nil {
 				logger.Error(err, "failed to get semver for current version %s", currentVersion)
 			} else {
+				kubernetesVersion := fmt.Sprintf("v%d.%d.%d", currentSemVersion.Major(), currentSemVersion.Minor(), currentSemVersion.Patch())
 				sveltosClusterScope.SetLabel(versionLabel,
-					fmt.Sprintf("v%d.%d.%d", currentSemVersion.Major(), currentSemVersion.Minor(), currentSemVersion.Patch()))
+					kubernetesVersion)
+				updateKubernetesVersionMetric(string(libsveltosv1beta1.ClusterTypeSveltos), sveltosClusterScope.SveltosCluster.Namespace,
+					sveltosClusterScope.SveltosCluster.Name, kubernetesVersion, logger)
 			}
 			sveltosClusterScope.SveltosCluster.Status.Version = currentVersion
 			logger.V(logs.LogDebug).Info(fmt.Sprintf("cluster version %s", currentVersion))
@@ -211,6 +214,8 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 	}
 
 	updateConnectionStatus(sveltosClusterScope, logger)
+	updateClusterConnectionStatusMetric(string(libsveltosv1beta1.ClusterTypeSveltos), sveltosClusterScope.SveltosCluster.Namespace,
+		sveltosClusterScope.SveltosCluster.Name, sveltosClusterScope.SveltosCluster.Status.ConnectionStatus, logger)
 }
 
 func updateConnectionStatus(sveltosClusterScope *scope.SveltosClusterScope, logger logr.Logger) {
@@ -325,23 +330,30 @@ func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context
 
 		for i := range config.Contexts {
 			cc := &config.Contexts[i]
-			namespace := cc.Context.Namespace
-			user := cc.Context.AuthInfo
+			saNamespace := cc.Context.Namespace
+			saName := cc.Context.AuthInfo
 
-			tokenRequest, err := r.getServiceAccountTokenRequest(ctx, remoteConfig, namespace, user, saExpirationInSecond, logger)
+			if sveltosCluster.Spec.TokenRequestRenewalOption.SANamespace != "" && sveltosCluster.Spec.TokenRequestRenewalOption.SAName != "" {
+				saNamespace = sveltosCluster.Spec.TokenRequestRenewalOption.SANamespace
+				saName = sveltosCluster.Spec.TokenRequestRenewalOption.SAName
+			}
+
+			tokenRequest, err := r.getServiceAccountTokenRequest(ctx, remoteConfig, saNamespace, saName, saExpirationInSecond, logger)
 			if err != nil {
 				logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get tokenRequest %v", err))
 				continue
 			}
 
 			logger.V(logs.LogDebug).Info("Get Kubeconfig from TokenRequest")
-			data := r.getKubeconfigFromToken(namespace, user, tokenRequest.Token, remoteConfig)
-			err = clusterproxy.UpdateSveltosSecretData(ctx, logger, r.Client, sveltosCluster.Namespace, sveltosCluster.Name, data)
+			key := "re-kubeconfig"
+			data := r.getKubeconfigFromToken(saNamespace, saName, tokenRequest.Token, remoteConfig)
+			err = clusterproxy.UpdateSveltosSecretData(ctx, logger, r.Client, sveltosCluster.Namespace, sveltosCluster.Name, data, key)
 			if err != nil {
 				logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to update SveltosCluster's Secret %v", err))
 				continue
 			}
 
+			sveltosCluster.Spec.KubeconfigKeyName = key
 			sveltosCluster.Status.LastReconciledTokenRequestAt = time.Now().Format(time.RFC3339)
 		}
 	}

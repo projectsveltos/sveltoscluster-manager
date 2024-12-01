@@ -68,8 +68,8 @@ CLUSTERCTL := $(TOOLS_BIN_DIR)/clusterctl
 KIND := $(TOOLS_BIN_DIR)/kind
 KUBECTL := $(TOOLS_BIN_DIR)/kubectl
 
-GOLANGCI_LINT_VERSION := "v1.59.0"
-CLUSTERCTL_VERSION := "v1.8.3"
+GOLANGCI_LINT_VERSION := "v1.61.0"
+CLUSTERCTL_VERSION := "v1.8.5"
 
 KUSTOMIZE_VER := v5.3.0
 KUSTOMIZE_BIN := kustomize
@@ -166,7 +166,7 @@ endif
 # K8S_VERSION for the Kind cluster can be set as environment variable. If not defined,
 # this default value is used
 ifndef K8S_VERSION
-K8S_VERSION := v1.31.0
+K8S_VERSION := v1.31.2
 endif
 
 CONTROL_CLUSTER_NAME ?= sveltos-management
