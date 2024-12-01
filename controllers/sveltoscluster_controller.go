@@ -44,9 +44,9 @@ import (
 
 	libsveltosv1beta1 "github.com/projectsveltos/libsveltos/api/v1beta1"
 	"github.com/projectsveltos/libsveltos/lib/clusterproxy"
+	"github.com/projectsveltos/libsveltos/lib/k8s_utils"
 	logs "github.com/projectsveltos/libsveltos/lib/logsettings"
 	"github.com/projectsveltos/libsveltos/lib/sharding"
-	"github.com/projectsveltos/libsveltos/lib/utils"
 	"github.com/projectsveltos/sveltoscluster-manager/pkg/scope"
 )
 
@@ -185,7 +185,7 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get projectsveltos namespace: %v", err))
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 	} else {
-		currentVersion, err := utils.GetKubernetesVersion(ctx, config, logger)
+		currentVersion, err := k8s_utils.GetKubernetesVersion(ctx, config, logger)
 		if err != nil {
 			logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get cluster kubernetes version %v", err))
 			errorMessage := err.Error()
@@ -314,7 +314,7 @@ func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context
 		}
 
 		var u *unstructured.Unstructured
-		u, err = utils.GetUnstructured(data)
+		u, err = k8s_utils.GetUnstructured(data)
 		if err != nil {
 			logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get unstructured %v", err))
 			return err
