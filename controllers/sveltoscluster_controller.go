@@ -175,7 +175,6 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 	}
 
 	logger.V(logs.LogInfo).Info("got client")
-	sveltosClusterScope.SveltosCluster.Status.Ready = true
 	sveltosClusterScope.SveltosCluster.Status.FailureMessage = nil
 
 	ns := &corev1.Namespace{}
@@ -185,6 +184,7 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get projectsveltos namespace: %v", err))
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 	} else {
+		sveltosClusterScope.SveltosCluster.Status.Ready = true
 		currentVersion, err := k8s_utils.GetKubernetesVersion(ctx, config, logger)
 		if err != nil {
 			logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get cluster kubernetes version %v", err))
