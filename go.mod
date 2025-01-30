@@ -1,6 +1,6 @@
 module github.com/projectsveltos/sveltoscluster-manager
 
-go 1.23.4
+go 1.23.5
 
 require (
 	github.com/Masterminds/semver v1.5.0
@@ -9,18 +9,18 @@ require (
 	github.com/onsi/ginkgo/v2 v2.22.2
 	github.com/onsi/gomega v1.36.2
 	github.com/pkg/errors v0.9.1
-	github.com/projectsveltos/libsveltos v0.45.0
+	github.com/projectsveltos/libsveltos v0.46.0
 	github.com/prometheus/client_golang v1.20.5
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/spf13/pflag v1.0.5
-	k8s.io/api v0.32.0
-	k8s.io/apiextensions-apiserver v0.32.0
-	k8s.io/apimachinery v0.32.0
-	k8s.io/client-go v0.32.0
-	k8s.io/component-base v0.32.0
+	github.com/spf13/pflag v1.0.6
+	k8s.io/api v0.32.1
+	k8s.io/apiextensions-apiserver v0.32.1
+	k8s.io/apimachinery v0.32.1
+	k8s.io/client-go v0.32.1
+	k8s.io/component-base v0.32.1
 	k8s.io/klog/v2 v2.130.1
-	sigs.k8s.io/cluster-api v1.9.3
-	sigs.k8s.io/controller-runtime v0.19.4
+	sigs.k8s.io/cluster-api v1.9.4
+	sigs.k8s.io/controller-runtime v0.20.1
 )
 
 require (
@@ -45,6 +45,7 @@ require (
 	github.com/gobuffalo/flect v1.0.3 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
+	github.com/google/btree v1.1.3 // indirect
 	github.com/google/cel-go v0.22.0 // indirect
 	github.com/google/gnostic-models v0.6.9 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
@@ -91,10 +92,10 @@ require (
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/apiserver v0.32.0 // indirect
+	k8s.io/apiserver v0.32.1 // indirect
 	k8s.io/cluster-bootstrap v0.32.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20241212222426-2c72e554b1e7 // indirect
-	k8s.io/kubectl v0.32.0 // indirect
+	k8s.io/kubectl v0.32.1 // indirect
 	k8s.io/utils v0.0.0-20241210054802-24370beab758 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.31.0 // indirect
 	sigs.k8s.io/json v0.0.0-20241014173422-cfa47c3a1cc8 // indirect
