@@ -129,8 +129,8 @@ func (r *SveltosClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// Handle non-deleted clusterProfile
 	r.reconcileNormal(ctx, sveltosClusterScope)
-	// Reconcile back in normalRequeueAfter time
-	return reconcile.Result{Requeue: true, RequeueAfter: normalRequeueAfter}, nil
+	// Periodically reconcile. We need to keep evaluating connectivity
+	return reconcile.Result{Requeue: true, RequeueAfter: time.Minute}, nil
 }
 
 func (r *SveltosClusterReconciler) reconcileNormal(
