@@ -272,6 +272,59 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 		Expect(sveltosCluster.Status.NextPause.Time).To(Equal(expectedPause))
 		Expect(sveltosCluster.Status.NextUnpause.Time).To(Equal(expectedUnpause))
 	})
+
+	It("getTokenExpiration returns token expiration time", func() {
+		initObjects := []client.Object{
+			sveltosCluster,
+		}
+
+		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(initObjects...).WithObjects(initObjects...).Build()
+
+		reconciler := getClusterProfileReconciler(c)
+
+		//nolint: gosec,lll // this is an already expired token
+		const token = "eyJhbGciOiJSUzI1NiIsImtpZCI6InpuMW5mc25rdFZRLWM2UlF2Sjk3OHFXZS10LWIwSVpHVHphYjhfZHNPaE0ifQ.eyJhdWQiOlsiaHR0cHM6Ly9rdWJlcm5ldGVzLmRlZmF1bHQuc3ZjLmNsdXN0ZXIubG9jYWwiLCJrM3MiXSwiZXhwIjoxNzM5MTcyNDI0LCJpYXQiOjE3Mzg4MjY4MjQsImlzcyI6Imh0dHBzOi8va3ViZXJuZXRlcy5kZWZhdWx0LnN2Yy5jbHVzdGVyLmxvY2FsIiwianRpIjoiYzdhMGUwZGItNDZiYS00OTdlLTg5NmYtZDU1NWY0NmM2YmJmIiwia3ViZXJuZXRlcy5pbyI6eyJuYW1lc3BhY2UiOiJkZWZhdWx0Iiwic2VydmljZWFjY291bnQiOnsibmFtZSI6InBsYXRmb3JtIiwidWlkIjoiMzVjOTc5NjgtMmNiNi00YWE1LWFlMzMtZDE2YjEzNWRhMjg1In19LCJuYmYiOjE3Mzg4MjY4MjQsInN1YiI6InN5c3RlbTpzZXJ2aWNlYWNjb3VudDpkZWZhdWx0OnBsYXRmb3JtIn0.eYTP3rPp2gG8p91sxh7E6mS6GlizBJOO4fPDR5G95VzOrdZFZflxv_pika-Z34Ut3qtggtZejxytZdZkSMv_fq9sYFJG57vqC48u1oUa_7nD6ej_37ojW-y-VZ5IFgkws-_37VNzsdSFaQPU4ybHaDVkyXrSnSYs90zRT40LY-Ee1Ro__-UDEPxuQS-qPKOwGb-V590PP4td9LUq8Wkh1SwKv7XZUlSACqTxN3OYYVoqcBYeqob6QtkTgxNZMlY4DQZBTlCSQCpo2GKnASxDfLWFX6yivchD2HpJpIe1JnDs6R17u6iXidrnobyYWWEf_DAyAkoEq9HoivbYCs5IBQ"
+
+		expirationTime, err := controllers.GetTokenExpiration(reconciler, token)
+		Expect(err).To(BeNil())
+
+		cetLocation, err := time.LoadLocation("Europe/Berlin") // Berlin is in CET
+		Expect(err).To(BeNil())
+		cetTime := expirationTime.In(cetLocation)
+
+		Expect(cetTime.String()).To(Equal("2025-02-10 08:27:04 +0100 CET"))
+	})
+
+	It("adjustTokenRequestRenewalOption returns correct time when renew is due", func() {
+		reconciler := getClusterProfileReconciler(testEnv.Client)
+
+		sa := &corev1.ServiceAccount{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      randomString(),
+				Namespace: "default",
+			},
+		}
+
+		Expect(testEnv.Create(context.TODO(), sa)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, sa)).To(Succeed())
+
+		// Create a token with an expiration time of one day
+		const oneDayInSeconds = 24 * 60 * 60
+		tokenRequestStatus, err := controllers.GetServiceAccountTokenRequest(reconciler, context.TODO(), testEnv.Config,
+			sa.Namespace, sa.Name, oneDayInSeconds, logger)
+		Expect(err).To(BeNil())
+
+		const twoDaysInSecond = 2 * oneDayInSeconds
+		tokenRequestRenewalOption := &libsveltosv1beta1.TokenRequestRenewalOption{
+			RenewTokenRequestInterval: metav1.Duration{Duration: twoDaysInSecond * time.Second},
+		}
+
+		// Token had an expiration of 24 hours (one day)
+		// SveltosCluster TokenRequestRenewalOption was set to request a renawal every 48 hours (two days)
+		// AdjustTokenRequestRenewalOption will return a token that is set to less than one day
+		newDuration := controllers.AdjustTokenRequestRenewalOption(reconciler, tokenRequestRenewalOption, tokenRequestStatus, logger)
+		Expect(newDuration.Duration < oneDayInSeconds*time.Second).To(BeTrue())
+	})
 })
 
 func getSveltosClusterInstance(namespace, name string) *libsveltosv1beta1.SveltosCluster {

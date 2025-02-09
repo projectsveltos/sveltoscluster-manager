@@ -17,7 +17,10 @@ limitations under the License.
 package controllers
 
 var (
-	ShouldRenewTokenRequest = (*SveltosClusterReconciler).shouldRenewTokenRequest
+	ShouldRenewTokenRequest         = (*SveltosClusterReconciler).shouldRenewTokenRequest
+	GetTokenExpiration              = (*SveltosClusterReconciler).getTokenExpiration
+	AdjustTokenRequestRenewalOption = (*SveltosClusterReconciler).adjustTokenRequestRenewalOption
+	GetServiceAccountTokenRequest   = (*SveltosClusterReconciler).getServiceAccountTokenRequest
 )
 
 var (
