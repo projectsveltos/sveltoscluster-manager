@@ -19,7 +19,9 @@ package controllers
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Masterminds/semver"
@@ -286,9 +288,19 @@ func (r *SveltosClusterReconciler) shouldRenewTokenRequest(sveltosClusterScope *
 		}
 	}
 
+	renewalInterval := sveltosCluster.Spec.TokenRequestRenewalOption.RenewTokenRequestInterval.Seconds()
+	// Calculate the time 10 minutes before the renewal interval
+	const tenMinutes = 10 * 60
+	var renewalThreshold time.Duration
+	if renewalInterval > tenMinutes {
+		renewalThreshold = time.Duration(renewalInterval-tenMinutes) * time.Second
+	} else {
+		renewalThreshold = time.Duration(renewalInterval) * time.Second
+	}
+
 	// Calculate how much time has passed since lastRenewal
 	elapsed := currentTime.Sub(lastRenewal.Time)
-	return elapsed.Seconds() > sveltosCluster.Spec.TokenRequestRenewalOption.RenewTokenRequestInterval.Seconds()
+	return elapsed.Seconds() > renewalThreshold.Seconds()
 }
 
 func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context,
@@ -344,6 +356,9 @@ func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context
 				continue
 			}
 
+			sveltosCluster.Spec.TokenRequestRenewalOption.RenewTokenRequestInterval =
+				r.adjustTokenRequestRenewalOption(sveltosCluster.Spec.TokenRequestRenewalOption, tokenRequest, logger)
+
 			logger.V(logs.LogDebug).Info("Get Kubeconfig from TokenRequest")
 			key := "re-kubeconfig"
 			data := r.getKubeconfigFromToken(saNamespace, saName, tokenRequest.Token, remoteConfig)
@@ -392,6 +407,33 @@ func (r *SveltosClusterReconciler) getServiceAccountTokenRequest(ctx context.Con
 	}
 
 	return &tokenRequest.Status, nil
+}
+
+func (r *SveltosClusterReconciler) getTokenExpiration(jwt string) (time.Time, error) {
+	parts := strings.Split(jwt, ".")
+	//nolint: mnd // expected format
+	if len(parts) != 3 {
+		return time.Time{}, fmt.Errorf("invalid JWT format")
+	}
+
+	payloadBase64 := parts[1]
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(payloadBase64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to decode payload: %w", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		return time.Time{}, fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+
+	exp, ok := payload["exp"].(float64)
+	if !ok {
+		return time.Time{}, fmt.Errorf("expiration time not found in payload")
+	}
+
+	expirationTime := time.Unix(int64(exp), 0)
+	return expirationTime, nil
 }
 
 // getKubeconfigFromToken returns Kubeconfig to access management cluster from token.
@@ -504,4 +546,34 @@ func getNextScheduleTime(schedule string, lastRunTime *metav1.Time, now time.Tim
 
 	next := sched.Next(now)
 	return &next, nil
+}
+
+func (r *SveltosClusterReconciler) adjustTokenRequestRenewalOption(
+	tokenRequestRenewalOption *libsveltosv1beta1.TokenRequestRenewalOption,
+	tokenRequest *authenticationv1.TokenRequestStatus, logger logr.Logger) metav1.Duration {
+
+	jwt := tokenRequest.Token
+
+	expirationTime, err := r.getTokenExpiration(jwt)
+	if err != nil {
+		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get token expiration: %v", err))
+		return tokenRequestRenewalOption.RenewTokenRequestInterval
+	}
+
+	logger.V(logs.LogDebug).Info(fmt.Sprintf("token expires at: %v\n", expirationTime))
+
+	saExpirationInSecond := tokenRequestRenewalOption.RenewTokenRequestInterval.Duration.Seconds()
+	expectedExpiration := time.Now().Add(time.Duration(saExpirationInSecond) * time.Second)
+
+	if expirationTime.Before(expectedExpiration) {
+		diff := expectedExpiration.Sub(expirationTime)
+		logger.V(logs.LogInfo).Info(
+			fmt.Sprintf("Token expiration is shorter than expected by %v. Requested: %v, Actual: %v",
+				diff, expectedExpiration, expirationTime))
+
+		actualLifetime := time.Until(expirationTime)
+		return metav1.Duration{Duration: actualLifetime}
+	}
+
+	return tokenRequestRenewalOption.RenewTokenRequestInterval
 }
