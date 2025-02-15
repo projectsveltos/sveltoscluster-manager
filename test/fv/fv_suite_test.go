@@ -37,9 +37,11 @@ import (
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	"k8s.io/klog/v2/textlogger"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/util"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -116,6 +118,7 @@ var _ = BeforeSuite(func() {
 
 	waitForClusterMachineToBeReady()
 
+	// This allows a pod in the management cluster to reach the managed cluster.
 	remoteRestConfig := getManagedClusterRestConfig(kindWorkloadCluster)
 
 	// Creates:
@@ -131,7 +134,8 @@ var _ = BeforeSuite(func() {
 })
 
 func generateKubeconfigWithTokenRequest(remoteRestConfig *rest.Config) string {
-	remoteClient, err := client.New(remoteRestConfig, client.Options{Scheme: scheme})
+	// This client allows ginkgo, running from terminal, to reach the managed cluster
+	workloadClient, err := getKindWorkloadClusterClient()
 	Expect(err).To(BeNil())
 
 	projectsveltos := "projectsveltos"
@@ -141,7 +145,7 @@ func generateKubeconfigWithTokenRequest(remoteRestConfig *rest.Config) string {
 			Name: projectsveltos,
 		},
 	}
-	err = remoteClient.Create(context.TODO(), ns)
+	err = workloadClient.Create(context.TODO(), ns)
 	if err != nil {
 		Expect(apierrors.IsAlreadyExists(err)).To(BeTrue())
 	}
@@ -153,7 +157,7 @@ func generateKubeconfigWithTokenRequest(remoteRestConfig *rest.Config) string {
 			Name:      projectsveltos,
 		},
 	}
-	err = remoteClient.Create(context.TODO(), serviceAccount)
+	err = workloadClient.Create(context.TODO(), serviceAccount)
 	if err != nil {
 		Expect(apierrors.IsAlreadyExists(err)).To(BeTrue())
 	}
@@ -175,7 +179,7 @@ func generateKubeconfigWithTokenRequest(remoteRestConfig *rest.Config) string {
 			},
 		},
 	}
-	err = remoteClient.Create(context.TODO(), clusterrole)
+	err = workloadClient.Create(context.TODO(), clusterrole)
 	if err != nil {
 		Expect(apierrors.IsAlreadyExists(err)).To(BeTrue())
 	}
@@ -199,18 +203,18 @@ func generateKubeconfigWithTokenRequest(remoteRestConfig *rest.Config) string {
 			},
 		},
 	}
-	err = remoteClient.Create(context.TODO(), clusterrolebinding)
+	err = workloadClient.Create(context.TODO(), clusterrolebinding)
 	if err != nil {
 		Expect(apierrors.IsAlreadyExists(err)).To(BeTrue())
 	}
 
-	tokenRequest := getServiceAccountTokenRequest(remoteRestConfig, projectsveltos, projectsveltos)
+	tokenRequest := getServiceAccountTokenRequest(projectsveltos, projectsveltos)
 	return getKubeconfigFromToken(remoteRestConfig, projectsveltos, projectsveltos, tokenRequest.Token)
 }
 
 // getServiceAccountTokenRequest returns token for a serviceaccount
-func getServiceAccountTokenRequest(restConfig *rest.Config,
-	serviceAccountNamespace, serviceAccountName string) *authenticationv1.TokenRequestStatus {
+func getServiceAccountTokenRequest(serviceAccountNamespace, serviceAccountName string,
+) *authenticationv1.TokenRequestStatus {
 
 	saExpirationInSecond := 365 * 24 * 60 * time.Minute
 	expiration := int64(saExpirationInSecond.Seconds())
@@ -221,7 +225,9 @@ func getServiceAccountTokenRequest(restConfig *rest.Config,
 		},
 	}
 
-	clientset, err := kubernetes.NewForConfig(restConfig)
+	workloadClusterRestConfig, err := getKindWorkloadClusterRestConfig()
+	Expect(err).To(BeNil())
+	clientset, err := kubernetes.NewForConfig(workloadClusterRestConfig)
 	Expect(err).To(BeNil())
 
 	By(fmt.Sprintf("Create Token for ServiceAccount %s/%s", serviceAccountNamespace, serviceAccountName))
@@ -234,7 +240,7 @@ func getServiceAccountTokenRequest(restConfig *rest.Config,
 }
 
 // getKubeconfigFromToken returns Kubeconfig to access management cluster from token.
-func getKubeconfigFromToken(restConfig *rest.Config, namespace, serviceAccountName, token string) string {
+func getKubeconfigFromToken(remoteRestConfig *rest.Config, namespace, serviceAccountName, token string) string {
 	template := `apiVersion: v1
 kind: Config
 clusters:
@@ -254,7 +260,7 @@ contexts:
     user: %s
 current-context: sveltos-context`
 
-	data := fmt.Sprintf(template, restConfig.Host, base64.StdEncoding.EncodeToString(restConfig.CAData),
+	data := fmt.Sprintf(template, remoteRestConfig.Host, base64.StdEncoding.EncodeToString(remoteRestConfig.CAData),
 		serviceAccountName, token, namespace, serviceAccountName)
 
 	return data
@@ -292,6 +298,29 @@ func createSveltosCluster(sveltosClusterNamespace, sveltosClusterName string) {
 		Spec: libsveltosv1beta1.SveltosClusterSpec{
 			TokenRequestRenewalOption: &libsveltosv1beta1.TokenRequestRenewalOption{
 				RenewTokenRequestInterval: metav1.Duration{Duration: time.Minute},
+			},
+			ReadinessChecks: []libsveltosv1beta1.ClusterCheck{
+				{
+					Name: "worker-nodes",
+					ResourceSelectors: []libsveltosv1beta1.ResourceSelector{
+						{
+							Kind:    "Node",
+							Group:   "",
+							Version: "v1",
+						},
+					},
+					Condition: `function evaluate()
+  hs = {}
+  hs.pass = false
+       
+  for _, resource in ipairs(resources) do
+    if  not (resource.metadata.labels and resource.metadata.labels["node-role.kubernetes.io/control-plane"]) then
+      hs.pass = true   
+    end
+  end
+  return hs
+end`,
+				},
 			},
 		},
 	}
@@ -332,4 +361,28 @@ func getManagedClusterRestConfig(workloadCluster *clusterv1.Cluster) *rest.Confi
 		logger)
 	Expect(err).To(BeNil())
 	return remoteRestConfig
+}
+
+// getKindWorkloadClusterClient returns client to access the kind cluster used as workload cluster
+func getKindWorkloadClusterClient() (client.Client, error) {
+	restConfig, err := getKindWorkloadClusterRestConfig()
+	if err != nil {
+		return nil, err
+	}
+	return client.New(restConfig, client.Options{Scheme: scheme})
+}
+
+// getKindWorkloadClusterRestConfig returns restConfig to access the kind cluster used as workload cluster
+func getKindWorkloadClusterRestConfig() (*rest.Config, error) {
+	kubeconfigPath := "workload_kubeconfig" // this file is created in this directory by Makefile during cluster creation
+	config, err := clientcmd.LoadFromFile(kubeconfigPath)
+	if err != nil {
+		return nil, err
+	}
+	return clientcmd.NewDefaultClientConfig(*config, &clientcmd.ConfigOverrides{}).ClientConfig()
+}
+
+func randomString() string {
+	const length = 10
+	return util.RandomString(length)
 }
