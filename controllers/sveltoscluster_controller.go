@@ -69,6 +69,16 @@ type SveltosClusterReconciler struct {
 	ShardKey             string // when set, only clusters matching the ShardKey will be reconciled
 }
 
+type matchStatus struct {
+	Matching bool   `json:"matching"`
+	Message  string `json:"message"`
+}
+
+type checkStatus struct {
+	Pass    bool   `json:"pass"`
+	Message string `json:"message"`
+}
+
 //+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=sveltosclusters,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=sveltosclusters/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;update
@@ -186,30 +196,36 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get projectsveltos namespace: %v", err))
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 	} else {
-		sveltosClusterScope.SveltosCluster.Status.Ready = true
-		currentVersion, err := k8s_utils.GetKubernetesVersion(ctx, config, logger)
+		err = r.runChecks(ctx, config, sveltosClusterScope.SveltosCluster, logger)
 		if err != nil {
-			logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get cluster kubernetes version %v", err))
 			errorMessage := err.Error()
 			sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 		} else {
-			currentSemVersion, err := semver.NewVersion(currentVersion)
+			sveltosClusterScope.SveltosCluster.Status.Ready = true
+			currentVersion, err := k8s_utils.GetKubernetesVersion(ctx, config, logger)
 			if err != nil {
-				logger.Error(err, "failed to get semver for current version %s", currentVersion)
+				logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get cluster kubernetes version %v", err))
+				errorMessage := err.Error()
+				sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 			} else {
-				kubernetesVersion := fmt.Sprintf("v%d.%d.%d", currentSemVersion.Major(), currentSemVersion.Minor(), currentSemVersion.Patch())
-				sveltosClusterScope.SetLabel(versionLabel,
-					kubernetesVersion)
-				updateKubernetesVersionMetric(string(libsveltosv1beta1.ClusterTypeSveltos), sveltosClusterScope.SveltosCluster.Namespace,
-					sveltosClusterScope.SveltosCluster.Name, kubernetesVersion, logger)
-			}
-			sveltosClusterScope.SveltosCluster.Status.Version = currentVersion
-			logger.V(logs.LogDebug).Info(fmt.Sprintf("cluster version %s", currentVersion))
-			if r.shouldRenewTokenRequest(sveltosClusterScope, logger) {
-				err = r.handleTokenRequestRenewal(ctx, sveltosClusterScope, config)
+				currentSemVersion, err := semver.NewVersion(currentVersion)
 				if err != nil {
-					errorMessage := err.Error()
-					sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+					logger.Error(err, "failed to get semver for current version %s", currentVersion)
+				} else {
+					kubernetesVersion := fmt.Sprintf("v%d.%d.%d", currentSemVersion.Major(), currentSemVersion.Minor(), currentSemVersion.Patch())
+					sveltosClusterScope.SetLabel(versionLabel,
+						kubernetesVersion)
+					updateKubernetesVersionMetric(string(libsveltosv1beta1.ClusterTypeSveltos), sveltosClusterScope.SveltosCluster.Namespace,
+						sveltosClusterScope.SveltosCluster.Name, kubernetesVersion, logger)
+				}
+				sveltosClusterScope.SveltosCluster.Status.Version = currentVersion
+				logger.V(logs.LogDebug).Info(fmt.Sprintf("cluster version %s", currentVersion))
+				if r.shouldRenewTokenRequest(sveltosClusterScope, logger) {
+					err = r.handleTokenRequestRenewal(ctx, sveltosClusterScope, config)
+					if err != nil {
+						errorMessage := err.Error()
+						sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+					}
 				}
 			}
 		}
@@ -238,6 +254,7 @@ func updateConnectionStatus(sveltosClusterScope *scope.SveltosClusterScope, logg
 func (r *SveltosClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	_, err := ctrl.NewControllerManagedBy(mgr).
 		For(&libsveltosv1beta1.SveltosCluster{}).
+		WithEventFilter(SveltosClusterPredicates(ctrl.Log)).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: r.ConcurrentReconciles,
 		}).
@@ -576,4 +593,16 @@ func (r *SveltosClusterReconciler) adjustTokenRequestRenewalOption(
 	}
 
 	return tokenRequestRenewalOption.RenewTokenRequestInterval
+}
+
+func (r *SveltosClusterReconciler) runChecks(ctx context.Context, remotConfig *rest.Config,
+	sveltosCluster *libsveltosv1beta1.SveltosCluster, logger logr.Logger) error {
+
+	if !sveltosCluster.Status.Ready {
+		// Run ReadinessChecks
+		return runChecks(ctx, remotConfig, sveltosCluster.Spec.ReadinessChecks, logger)
+	}
+
+	// Run LivenessChecks
+	return runChecks(ctx, remotConfig, sveltosCluster.Spec.LivenessChecks, logger)
 }
