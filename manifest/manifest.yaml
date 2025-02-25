@@ -120,7 +120,7 @@ spec:
         - --v=5
         command:
         - /manager
-        image: docker.io/projectsveltos/sveltoscluster-manager:v0.49.0
+        image: docker.io/projectsveltos/sveltoscluster-manager:main
         livenessProbe:
           failureThreshold: 3
           httpGet:
