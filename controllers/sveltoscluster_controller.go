@@ -190,10 +190,10 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 	sveltosClusterScope.SveltosCluster.Status.FailureMessage = nil
 
 	ns := &corev1.Namespace{}
-	err = c.Get(context.TODO(), types.NamespacedName{Name: "projectsveltos"}, ns)
+	err = c.Get(context.TODO(), types.NamespacedName{Name: "kube-system"}, ns)
 	if err != nil && !apierrors.IsNotFound(err) {
 		errorMessage := err.Error()
-		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get projectsveltos namespace: %v", err))
+		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get kube-system namespace: %v", err))
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 	} else {
 		err = r.runChecks(ctx, config, sveltosClusterScope.SveltosCluster, logger)
