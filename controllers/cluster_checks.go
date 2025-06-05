@@ -33,6 +33,7 @@ import (
 	"k8s.io/client-go/restmapper"
 
 	libsveltosv1beta1 "github.com/projectsveltos/libsveltos/api/v1beta1"
+	sveltoscel "github.com/projectsveltos/libsveltos/lib/cel"
 	logs "github.com/projectsveltos/libsveltos/lib/logsettings"
 	sveltoslua "github.com/projectsveltos/libsveltos/lib/lua"
 )
@@ -145,7 +146,7 @@ func getResourcesMatchinResourceSelector(ctx context.Context, remotConfig *rest.
 		if !resource.GetDeletionTimestamp().IsZero() {
 			continue
 		}
-		isMatch, err := isMatchForEventSource(resource, resourceSelector.Evaluate, logger)
+		isMatch, err := isMatch(resource, resourceSelector, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -156,6 +157,31 @@ func getResourcesMatchinResourceSelector(ctx context.Context, remotConfig *rest.
 	}
 
 	return resources, nil
+}
+
+func isMatch(u *unstructured.Unstructured, resourceSelector *libsveltosv1beta1.ResourceSelector,
+	logger logr.Logger) (bool, error) {
+
+	gvk := u.GroupVersionKind()
+
+	var isMatch bool
+
+	isMatch, err := sveltoscel.EvaluateRules(gvk, u, resourceSelector.EvaluateCEL, logger)
+	if err != nil {
+		return false, err
+	}
+
+	if isMatch {
+		return true, nil
+	}
+
+	if resourceSelector.EvaluateCEL != nil && resourceSelector.Evaluate == "" {
+		// Before CEL, Sveltos behavior was for a resource to be a match if Evaluate was empty
+		// If CEL rules are present and Lua is not defined, treat as non-match (new behavior)
+		return false, nil
+	}
+
+	return isMatchForLua(u, resourceSelector.Evaluate, logger)
 }
 
 func addLabelFilters(labelFilters []libsveltosv1beta1.LabelFilter) string {
@@ -184,7 +210,7 @@ func addLabelFilters(labelFilters []libsveltosv1beta1.LabelFilter) string {
 	return labelFilter
 }
 
-func isMatchForEventSource(resource *unstructured.Unstructured, script string, logger logr.Logger) (bool, error) {
+func isMatchForLua(resource *unstructured.Unstructured, script string, logger logr.Logger) (bool, error) {
 	if script == "" {
 		return true, nil
 	}
