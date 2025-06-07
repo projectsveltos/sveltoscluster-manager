@@ -320,6 +320,24 @@ func (r *SveltosClusterReconciler) shouldRenewTokenRequest(sveltosClusterScope *
 	return elapsed.Seconds() > renewalThreshold.Seconds()
 }
 
+// getEffectiveTokenDuration returns the token duration to use when requesting a ServiceAccount token.
+// If TokenDuration is explicitly set, it is used. Otherwise, the fallback is RenewTokenRequestInterval.
+// This ensures a default behavior even when TokenDuration is omitted.
+func (r *SveltosClusterReconciler) getEffectiveTokenDurationInSecond(
+	opt *libsveltosv1beta1.TokenRequestRenewalOption) float64 {
+
+	if opt.TokenDuration.Duration == 0 {
+		// Minimum duration for a TokenRequest is 10 minutes. SveltosCluster reconciler always set the expiration to be
+		// sveltosCluster.Spec.TokenRequestRenewalOption.RenewTokenRequestInterval plus 30 minutes. That will also allow
+		// reconciler to renew it again before it current tokenRequest expires
+		const secondsToAddToTokenRequest = 30 * 60 // 30 minutes
+		saExpirationInSecond := opt.RenewTokenRequestInterval.Duration.Seconds()
+		saExpirationInSecond += float64(secondsToAddToTokenRequest)
+		return saExpirationInSecond
+	}
+	return opt.TokenDuration.Duration.Seconds()
+}
+
 func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context,
 	sveltosClusterScope *scope.SveltosClusterScope, remoteConfig *rest.Config) error {
 
@@ -328,12 +346,7 @@ func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context
 	if sveltosCluster.Spec.TokenRequestRenewalOption != nil {
 		logger := sveltosClusterScope.Logger
 
-		saExpirationInSecond := sveltosCluster.Spec.TokenRequestRenewalOption.RenewTokenRequestInterval.Duration.Seconds()
-		// Minimum duration for a TokenRequest is 10 minutes. SveltosCluster reconciler always set the expiration to be
-		// sveltosCluster.Spec.TokenRequestRenewalOption.RenewTokenRequestInterval plus 30 minutes. That will also allow
-		// reconciler to renew it again before it current tokenRequest expires
-		const secondsToAddToTokenRequest = 30 * 60 // 30 minutes
-		saExpirationInSecond += float64(secondsToAddToTokenRequest)
+		saExpirationInSecond := r.getEffectiveTokenDurationInSecond(sveltosCluster.Spec.TokenRequestRenewalOption)
 
 		data, err := clusterproxy.GetSveltosSecretData(ctx, logger, r.Client,
 			sveltosCluster.Namespace, sveltosCluster.Name)
