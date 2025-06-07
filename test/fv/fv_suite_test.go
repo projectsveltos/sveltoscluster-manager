@@ -298,6 +298,7 @@ func createSveltosCluster(sveltosClusterNamespace, sveltosClusterName string) {
 		Spec: libsveltosv1beta1.SveltosClusterSpec{
 			TokenRequestRenewalOption: &libsveltosv1beta1.TokenRequestRenewalOption{
 				RenewTokenRequestInterval: metav1.Duration{Duration: time.Minute},
+				TokenDuration:             metav1.Duration{Duration: time.Hour},
 			},
 			ReadinessChecks: []libsveltosv1beta1.ClusterCheck{
 				{
@@ -312,10 +313,10 @@ func createSveltosCluster(sveltosClusterNamespace, sveltosClusterName string) {
 					Condition: `function evaluate()
   hs = {}
   hs.pass = false
-       
+
   for _, resource in ipairs(resources) do
     if  not (resource.metadata.labels and resource.metadata.labels["node-role.kubernetes.io/control-plane"]) then
-      hs.pass = true   
+      hs.pass = true
     end
   end
   return hs

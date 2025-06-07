@@ -175,6 +175,7 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 	It("shouldRenewTokenRequest returns true when enough time has passed since last TokenRequest renewal", func() {
 		sveltosCluster.Spec.TokenRequestRenewalOption = &libsveltosv1beta1.TokenRequestRenewalOption{
 			RenewTokenRequestInterval: metav1.Duration{Duration: time.Minute},
+			TokenDuration:             metav1.Duration{Duration: time.Hour},
 		}
 
 		initObjects := []client.Object{
@@ -214,6 +215,8 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 		Expect(c.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)).To(Succeed())
 		currentSveltosCluster.Status.LastReconciledTokenRequestAt = now.Format(time.RFC3339)
 		Expect(c.Status().Update(context.TODO(), currentSveltosCluster)).To(Succeed())
+		Expect(currentSveltosCluster.Spec.TokenRequestRenewalOption.TokenDuration).To(
+			Equal(metav1.Duration{Duration: time.Hour}))
 
 		sveltosClusterScope.SveltosCluster = currentSveltosCluster
 
