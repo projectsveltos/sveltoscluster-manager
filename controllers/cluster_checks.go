@@ -162,11 +162,9 @@ func getResourcesMatchinResourceSelector(ctx context.Context, remotConfig *rest.
 func isMatch(u *unstructured.Unstructured, resourceSelector *libsveltosv1beta1.ResourceSelector,
 	logger logr.Logger) (bool, error) {
 
-	gvk := u.GroupVersionKind()
-
 	var isMatch bool
 
-	isMatch, err := sveltoscel.EvaluateRules(gvk, u, resourceSelector.EvaluateCEL, logger)
+	isMatch, err := sveltoscel.EvaluateRules(u, resourceSelector.EvaluateCEL, logger)
 	if err != nil {
 		return false, err
 	}
