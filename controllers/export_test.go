@@ -21,6 +21,7 @@ var (
 	GetTokenExpiration              = (*SveltosClusterReconciler).getTokenExpiration
 	AdjustTokenRequestRenewalOption = (*SveltosClusterReconciler).adjustTokenRequestRenewalOption
 	GetServiceAccountTokenRequest   = (*SveltosClusterReconciler).getServiceAccountTokenRequest
+	ReconcilePullModeCluster        = (*SveltosClusterReconciler).reconcilePullModeCluster
 )
 
 var (
