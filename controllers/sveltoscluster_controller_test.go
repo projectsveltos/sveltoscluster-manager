@@ -328,6 +328,81 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 		newDuration := controllers.AdjustTokenRequestRenewalOption(reconciler, tokenRequestRenewalOption, tokenRequestStatus, logger)
 		Expect(newDuration.Duration < oneDayInSeconds*time.Second).To(BeTrue())
 	})
+
+	It("reconcilePullModeCluster verifies last update from sveltos-applier", func() {
+		ns := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: sveltosCluster.Namespace,
+			},
+		}
+
+		Expect(testEnv.Create(context.TODO(), ns)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, ns)).To(Succeed())
+
+		sveltosCluster.Spec.PullMode = true
+		Expect(testEnv.Create(context.TODO(), sveltosCluster)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, sveltosCluster)).To(Succeed())
+
+		reconciler := getClusterProfileReconciler(testEnv.Client)
+
+		sveltosClusterName := client.ObjectKey{
+			Name:      sveltosCluster.Name,
+			Namespace: sveltosCluster.Namespace,
+		}
+
+		currentSveltosCluster := &libsveltosv1beta1.SveltosCluster{}
+		Expect(testEnv.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)).To(Succeed())
+		currentTime := metav1.Now()
+		currentSveltosCluster.Status.AgentLastReportTime = &currentTime
+		currentSveltosCluster.Status.ConnectionStatus = libsveltosv1beta1.ConnectionHealthy
+		currentSveltosCluster.Status.Ready = true
+
+		Expect(testEnv.Status().Update(context.TODO(), currentSveltosCluster)).To(Succeed())
+
+		// wait for cache to sync status
+		Eventually(func() bool {
+			currentSveltosCluster := &libsveltosv1beta1.SveltosCluster{}
+			err := testEnv.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)
+			return err == nil &&
+				currentSveltosCluster.Status.AgentLastReportTime != nil
+		}, timeout, pollingInterval).Should(BeTrue())
+
+		sveltosClusterScope, err := scope.NewSveltosClusterScope(scope.SveltosClusterScopeParams{
+			Client:         testEnv.Client,
+			SveltosCluster: currentSveltosCluster,
+			ControllerName: randomString(),
+			Logger:         logger,
+		})
+		Expect(err).To(BeNil())
+
+		controllers.ReconcilePullModeCluster(reconciler, sveltosClusterScope, logger)
+
+		Expect(currentSveltosCluster.Status.FailureMessage).To(BeNil())
+		Expect(currentSveltosCluster.Status.ConnectionStatus).To(Equal(libsveltosv1beta1.ConnectionHealthy))
+
+		Expect(testEnv.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)).To(Succeed())
+		currentTime = metav1.Time{Time: time.Now().UTC().Add(-1 * time.Hour)}
+		currentSveltosCluster.Status.AgentLastReportTime = &currentTime
+		currentSveltosCluster.Status.ConnectionStatus = libsveltosv1beta1.ConnectionHealthy
+		currentSveltosCluster.Status.Ready = true
+
+		Expect(testEnv.Status().Update(context.TODO(), currentSveltosCluster)).To(Succeed())
+
+		// wait for cache to sync status
+		Eventually(func() bool {
+			currentSveltosCluster := &libsveltosv1beta1.SveltosCluster{}
+			err := testEnv.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)
+			if err != nil || currentSveltosCluster.Status.AgentLastReportTime == nil {
+				return false
+			}
+			age := time.Since(currentSveltosCluster.Status.AgentLastReportTime.Time)
+			return age > 5*time.Minute
+		}, timeout, pollingInterval).Should(BeTrue())
+
+		controllers.ReconcilePullModeCluster(reconciler, sveltosClusterScope, logger)
+
+		Expect(currentSveltosCluster.Status.FailureMessage).ToNot(BeNil())
+	})
 })
 
 func getSveltosClusterInstance(namespace, name string) *libsveltosv1beta1.SveltosCluster {

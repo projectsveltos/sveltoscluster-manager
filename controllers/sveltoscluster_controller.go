@@ -155,6 +155,11 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 
 	defer handleAutomaticPauseUnPause(sveltosClusterScope.SveltosCluster, time.Now(), logger)
 
+	if sveltosClusterScope.SveltosCluster.Spec.PullMode {
+		r.reconcilePullModeCluster(sveltosClusterScope, logger)
+		return
+	}
+
 	s := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(s); err != nil {
 		errorMessage := err.Error()
@@ -618,4 +623,32 @@ func (r *SveltosClusterReconciler) runChecks(ctx context.Context, remotConfig *r
 
 	// Run LivenessChecks
 	return runChecks(ctx, remotConfig, sveltosCluster.Spec.LivenessChecks, logger)
+}
+
+func (r *SveltosClusterReconciler) reconcilePullModeCluster(
+	sveltosClusterScope *scope.SveltosClusterScope, logger logr.Logger,
+) {
+
+	cluster := sveltosClusterScope.SveltosCluster
+	if !cluster.Status.Ready {
+		return
+	}
+
+	if cluster.Status.AgentLastReportTime == nil {
+		return
+	}
+
+	lastReportAge := time.Since(cluster.Status.AgentLastReportTime.Time)
+
+	maxAllowedAge := 10 * time.Minute
+
+	if lastReportAge > maxAllowedAge {
+		msg := "AgentLastReportTime is older than max allowed age."
+		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &msg
+	}
+
+	updateConnectionStatus(sveltosClusterScope, logger)
+	updateClusterConnectionStatusMetric(string(libsveltosv1beta1.ClusterTypeSveltos),
+		sveltosClusterScope.SveltosCluster.Namespace, sveltosClusterScope.SveltosCluster.Name,
+		sveltosClusterScope.SveltosCluster.Status.ConnectionStatus, logger)
 }
