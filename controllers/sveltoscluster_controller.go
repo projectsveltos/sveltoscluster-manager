@@ -201,6 +201,15 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get kube-system namespace: %v", err))
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 	} else {
+		// Always renew token if needed
+		if r.shouldRenewTokenRequest(sveltosClusterScope, logger) {
+			err = r.handleTokenRequestRenewal(ctx, sveltosClusterScope, config)
+			if err != nil {
+				errorMessage := err.Error()
+				sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+			}
+		}
+
 		err = r.runChecks(ctx, config, sveltosClusterScope.SveltosCluster, logger)
 		if err != nil {
 			errorMessage := err.Error()
@@ -225,13 +234,6 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 				}
 				sveltosClusterScope.SveltosCluster.Status.Version = currentVersion
 				logger.V(logs.LogDebug).Info(fmt.Sprintf("cluster version %s", currentVersion))
-				if r.shouldRenewTokenRequest(sveltosClusterScope, logger) {
-					err = r.handleTokenRequestRenewal(ctx, sveltosClusterScope, config)
-					if err != nil {
-						errorMessage := err.Error()
-						sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
-					}
-				}
 			}
 		}
 	}
