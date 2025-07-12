@@ -201,38 +201,37 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get kube-system namespace: %v", err))
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 	} else {
+		if r.shouldRenewTokenRequest(sveltosClusterScope, logger) {
+			err = r.handleTokenRequestRenewal(ctx, sveltosClusterScope, config)
+			if err != nil {
+				errorMessage := err.Error()
+				sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+			}
+		}
 		err = r.runChecks(ctx, config, sveltosClusterScope.SveltosCluster, logger)
 		if err != nil {
 			errorMessage := err.Error()
 			sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+		}
+		sveltosClusterScope.SveltosCluster.Status.Ready = true
+		currentVersion, err := k8s_utils.GetKubernetesVersion(ctx, config, logger)
+		if err != nil {
+			logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get cluster kubernetes version %v", err))
+			errorMessage := err.Error()
+			sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 		} else {
-			sveltosClusterScope.SveltosCluster.Status.Ready = true
-			currentVersion, err := k8s_utils.GetKubernetesVersion(ctx, config, logger)
+			currentSemVersion, err := semver.NewVersion(currentVersion)
 			if err != nil {
-				logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get cluster kubernetes version %v", err))
-				errorMessage := err.Error()
-				sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+				logger.Error(err, "failed to get semver for current version %s", currentVersion)
 			} else {
-				currentSemVersion, err := semver.NewVersion(currentVersion)
-				if err != nil {
-					logger.Error(err, "failed to get semver for current version %s", currentVersion)
-				} else {
-					kubernetesVersion := fmt.Sprintf("v%d.%d.%d", currentSemVersion.Major(), currentSemVersion.Minor(), currentSemVersion.Patch())
-					sveltosClusterScope.SetLabel(versionLabel,
-						kubernetesVersion)
-					updateKubernetesVersionMetric(string(libsveltosv1beta1.ClusterTypeSveltos), sveltosClusterScope.SveltosCluster.Namespace,
-						sveltosClusterScope.SveltosCluster.Name, kubernetesVersion, logger)
-				}
-				sveltosClusterScope.SveltosCluster.Status.Version = currentVersion
-				logger.V(logs.LogDebug).Info(fmt.Sprintf("cluster version %s", currentVersion))
-				if r.shouldRenewTokenRequest(sveltosClusterScope, logger) {
-					err = r.handleTokenRequestRenewal(ctx, sveltosClusterScope, config)
-					if err != nil {
-						errorMessage := err.Error()
-						sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
-					}
-				}
+				kubernetesVersion := fmt.Sprintf("v%d.%d.%d", currentSemVersion.Major(), currentSemVersion.Minor(), currentSemVersion.Patch())
+				sveltosClusterScope.SetLabel(versionLabel,
+					kubernetesVersion)
+				updateKubernetesVersionMetric(string(libsveltosv1beta1.ClusterTypeSveltos), sveltosClusterScope.SveltosCluster.Namespace,
+					sveltosClusterScope.SveltosCluster.Name, kubernetesVersion, logger)
 			}
+			sveltosClusterScope.SveltosCluster.Status.Version = currentVersion
+			logger.V(logs.LogDebug).Info(fmt.Sprintf("cluster version %s", currentVersion))
 		}
 	}
 
