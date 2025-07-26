@@ -187,11 +187,11 @@ set-manifest-pull-policy:
 
 .PHONY: build
 build: generate fmt vet ## Build manager binary.
-	go build -o bin/manager main.go
+	go build -o bin/manager cmd/main.go
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
-	go run ./main.go
+	go run ./cmd/main.go
 
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
@@ -309,6 +309,7 @@ deploy-projectsveltos: $(KUSTOMIZE)
 	@echo 'Install libsveltos CRDs'
 	$(KUBECTL) apply -f https://raw.githubusercontent.com/projectsveltos/libsveltos/$(TAG)/config/crd/bases/lib.projectsveltos.io_debuggingconfigurations.yaml
 	$(KUBECTL) apply -f https://raw.githubusercontent.com/projectsveltos/libsveltos/$(TAG)/config/crd/bases/lib.projectsveltos.io_sveltosclusters.yaml
+	$(KUBECTL) apply -f https://raw.githubusercontent.com/projectsveltos/libsveltos/$(TAG)/config/crd/bases/lib.projectsveltos.io_sveltoslicenses.yaml
 
 	# Install projectsveltos sveltoscluster-manager components
 	@echo 'Install projectsveltos sveltoscluster-manager components'
