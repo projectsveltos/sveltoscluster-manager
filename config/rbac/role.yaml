@@ -29,6 +29,7 @@ rules:
   - lib.projectsveltos.io
   resources:
   - debuggingconfigurations
+  - sveltoslicenses
   verbs:
   - get
   - list
@@ -49,6 +50,7 @@ rules:
   - lib.projectsveltos.io
   resources:
   - sveltosclusters/status
+  - sveltoslicenses/status
   verbs:
   - get
   - patch
