@@ -151,7 +151,7 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 ) {
 
 	logger := sveltosClusterScope.Logger
-	logger.V(logs.LogInfo).Info("Reconciling SveltosCluster")
+	logger.V(logs.LogDebug).Info("Reconciling SveltosCluster")
 
 	defer handleAutomaticPauseUnPause(sveltosClusterScope.SveltosCluster, time.Now(), logger)
 
@@ -191,7 +191,7 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 		return
 	}
 
-	logger.V(logs.LogInfo).Info("got client")
+	logger.V(logs.LogDebug).Info("got client")
 	sveltosClusterScope.SveltosCluster.Status.FailureMessage = nil
 
 	ns := &corev1.Namespace{}
