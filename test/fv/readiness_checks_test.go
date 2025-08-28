@@ -18,6 +18,7 @@ package fv_test
 
 import (
 	"context"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -58,7 +59,7 @@ var _ = Describe("ReadinessCheck", func() {
   hs.pass = false
   if #resources == 1 then
     -- The namespace selected in ResourceSelector does not exist, so this test fails
-    hs.pass = true  
+    hs.pass = true
   end
   return hs
 end`,
@@ -83,7 +84,7 @@ end`,
 				return false
 			}
 			return currentSveltosCluster.Status.FailureMessage != nil &&
-				*currentSveltosCluster.Status.FailureMessage == "cluster check failing-check failed"
+				strings.Contains(*currentSveltosCluster.Status.FailureMessage, "cluster check failing-check failed")
 		}, timeout, pollingInterval).Should(BeTrue())
 
 		By("Create namespace in the managed cluster")

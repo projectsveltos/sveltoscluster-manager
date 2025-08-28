@@ -338,11 +338,11 @@ func (r *SveltosClusterReconciler) getEffectiveTokenDurationInSecond(
 		// sveltosCluster.Spec.TokenRequestRenewalOption.RenewTokenRequestInterval plus 30 minutes. That will also allow
 		// reconciler to renew it again before it current tokenRequest expires
 		const secondsToAddToTokenRequest = 30 * 60 // 30 minutes
-		saExpirationInSecond := opt.RenewTokenRequestInterval.Duration.Seconds()
+		saExpirationInSecond := opt.RenewTokenRequestInterval.Seconds()
 		saExpirationInSecond += float64(secondsToAddToTokenRequest)
 		return saExpirationInSecond
 	}
-	return opt.TokenDuration.Duration.Seconds()
+	return opt.TokenDuration.Seconds()
 }
 
 func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context,
@@ -599,7 +599,7 @@ func (r *SveltosClusterReconciler) adjustTokenRequestRenewalOption(
 
 	logger.V(logs.LogDebug).Info(fmt.Sprintf("token expires at: %v\n", expirationTime))
 
-	saExpirationInSecond := tokenRequestRenewalOption.RenewTokenRequestInterval.Duration.Seconds()
+	saExpirationInSecond := tokenRequestRenewalOption.RenewTokenRequestInterval.Seconds()
 	expectedExpiration := time.Now().Add(time.Duration(saExpirationInSecond) * time.Second)
 
 	if expirationTime.Before(expectedExpiration) {
