@@ -42,13 +42,13 @@ func runChecks(ctx context.Context, remotConfig *rest.Config, checks []libsvelto
 	logger logr.Logger) error {
 
 	for i := range checks {
-		pass, err := runCheck(ctx, remotConfig, &checks[i], logger)
+		pass, message, err := runCheck(ctx, remotConfig, &checks[i], logger)
 		if err != nil {
 			return err
 		}
 		if !pass {
 			logger.V(logs.LogInfo).Info(fmt.Sprintf("cluster check %s failed", checks[i].Name))
-			return fmt.Errorf("cluster check %s failed", checks[i].Name)
+			return fmt.Errorf("cluster check %s failed (message: %s)", checks[i].Name, message)
 		}
 	}
 
@@ -56,11 +56,12 @@ func runChecks(ctx context.Context, remotConfig *rest.Config, checks []libsvelto
 }
 
 func runCheck(ctx context.Context, remotConfig *rest.Config, check *libsveltosv1beta1.ClusterCheck,
-	logger logr.Logger) (bool, error) {
+	logger logr.Logger) (passed bool, message string, err error) {
 
-	resources, err := getResources(ctx, remotConfig, check.ResourceSelectors, logger)
+	var resources []*unstructured.Unstructured
+	resources, err = getResources(ctx, remotConfig, check.ResourceSelectors, logger)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 
 	return validateCheck(check.Condition, resources, logger)
@@ -84,8 +85,8 @@ func getResources(ctx context.Context, remotConfig *rest.Config, resourceSelecto
 }
 
 // getResourcesMatchinResourceSelector returns resources matching ResourceSelector.
-func getResourcesMatchinResourceSelector(ctx context.Context, remotConfig *rest.Config, resourceSelector *libsveltosv1beta1.ResourceSelector,
-	logger logr.Logger) ([]*unstructured.Unstructured, error) {
+func getResourcesMatchinResourceSelector(ctx context.Context, remotConfig *rest.Config,
+	resourceSelector *libsveltosv1beta1.ResourceSelector, logger logr.Logger) ([]*unstructured.Unstructured, error) {
 
 	gvk := schema.GroupVersionKind{
 		Group:   resourceSelector.Group,
@@ -265,10 +266,10 @@ func isMatchForLua(resource *unstructured.Unstructured, script string, logger lo
 }
 
 func validateCheck(luaScript string, resources []*unstructured.Unstructured,
-	logger logr.Logger) (bool, error) {
+	logger logr.Logger) (passed bool, message string, err error) {
 
 	if luaScript == "" {
-		return true, nil
+		return true, "", nil
 	}
 
 	// Create a new Lua state
@@ -278,7 +279,7 @@ func validateCheck(luaScript string, resources []*unstructured.Unstructured,
 	// Load the Lua script
 	if err := l.DoString(luaScript); err != nil {
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("doString failed: %v", err))
-		return false, err
+		return false, "", err
 	}
 
 	// Create an argument table
@@ -296,33 +297,33 @@ func validateCheck(luaScript string, resources []*unstructured.Unstructured,
 		Protect: true,                    // return err or panic
 	}, argTable); err != nil {
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to call evaluate function: %s", err.Error()))
-		return false, err
+		return false, "", err
 	}
 
 	lv := l.Get(-1)
 	tbl, ok := lv.(*lua.LTable)
 	if !ok {
 		logger.V(logs.LogInfo).Info(sveltoslua.LuaTableError)
-		return false, fmt.Errorf("%s", sveltoslua.LuaTableError)
+		return false, "", fmt.Errorf("%s", sveltoslua.LuaTableError)
 	}
 
 	goResult := sveltoslua.ToGoValue(tbl)
 	resultJson, err := json.Marshal(goResult)
 	if err != nil {
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to marshal result: %v", err))
-		return false, err
+		return false, "", err
 	}
 
 	var result checkStatus
 	err = json.Unmarshal(resultJson, &result)
 	if err != nil {
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to marshal result: %v", err))
-		return false, err
+		return false, "", err
 	}
 
 	if result.Message != "" {
 		logger.V(logs.LogInfo).Info(fmt.Sprintf("message: %s", result.Message))
 	}
 
-	return result.Pass, nil
+	return result.Pass, result.Message, nil
 }
