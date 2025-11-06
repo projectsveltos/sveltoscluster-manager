@@ -1,18 +1,18 @@
 module github.com/projectsveltos/sveltoscluster-manager
 
-go 1.25.2
+go 1.25.3
 
 require (
 	github.com/Masterminds/semver v1.5.0
 	github.com/TwiN/go-color v1.4.1
 	github.com/go-logr/logr v1.4.3
-	github.com/onsi/ginkgo/v2 v2.26.0
+	github.com/onsi/ginkgo/v2 v2.27.2
 	github.com/onsi/gomega v1.38.2
 	github.com/pkg/errors v0.9.1
-	github.com/projectsveltos/libsveltos v1.1.1-0.20251017113901-ab75f0913756
+	github.com/projectsveltos/libsveltos v1.1.1-0.20251106133930-7c281ffd469e
 	github.com/prometheus/client_golang v1.23.0
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/spf13/pflag v1.0.7
+	github.com/spf13/pflag v1.0.10
 	github.com/yuin/gopher-lua v1.1.1
 	k8s.io/api v0.34.1
 	k8s.io/apiextensions-apiserver v0.34.1
@@ -20,8 +20,8 @@ require (
 	k8s.io/client-go v0.34.1
 	k8s.io/component-base v0.34.1
 	k8s.io/klog/v2 v2.130.1
-	sigs.k8s.io/cluster-api v1.11.2
-	sigs.k8s.io/controller-runtime v0.22.3
+	sigs.k8s.io/cluster-api v1.11.3
+	sigs.k8s.io/controller-runtime v0.22.4
 )
 
 require (
@@ -87,7 +87,6 @@ require (
 	go.opentelemetry.io/otel/sdk v1.34.0 // indirect
 	go.opentelemetry.io/otel/trace v1.35.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.5.0 // indirect
-	go.uber.org/automaxprocs v1.6.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.42.0 // indirect
