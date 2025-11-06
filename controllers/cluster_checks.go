@@ -117,8 +117,14 @@ func getResourcesMatchinResourceSelector(ctx context.Context, remotConfig *rest.
 
 	options := metav1.ListOptions{}
 
-	if len(resourceSelector.LabelFilters) > 0 {
-		options.LabelSelector = addLabelFilters(resourceSelector.LabelFilters)
+	// Calculate the combined label selector from both LabelFilters and Selector
+	labelSelector, err := calculateLabelSelector(resourceSelector)
+	if err != nil {
+		return nil, err
+	}
+
+	if labelSelector != "" {
+		options.LabelSelector = labelSelector
 	}
 
 	if resourceSelector.Namespace != "" {
@@ -160,6 +166,52 @@ func getResourcesMatchinResourceSelector(ctx context.Context, remotConfig *rest.
 	return resources, nil
 }
 
+// calculateLabelSelector combines custom LabelFilters and a standard metav1.LabelSelector
+// into a single string selector. If both are present, they are logically ANDed.
+func calculateLabelSelector(resourceSelector *libsveltosv1beta1.ResourceSelector) (string, error) {
+	labelFilter := ""
+
+	// 1. Process custom LabelFilters
+	if len(resourceSelector.LabelFilters) > 0 {
+		for i := range resourceSelector.LabelFilters {
+			if labelFilter != "" {
+				labelFilter += ","
+			}
+			f := resourceSelector.LabelFilters[i]
+			switch f.Operation {
+			case libsveltosv1beta1.OperationEqual:
+				labelFilter += fmt.Sprintf("%s=%s", f.Key, f.Value)
+			case libsveltosv1beta1.OperationDifferent:
+				labelFilter += fmt.Sprintf("%s!=%s", f.Key, f.Value)
+			case libsveltosv1beta1.OperationHas:
+				labelFilter += f.Key
+			case libsveltosv1beta1.OperationDoesNotHave:
+				labelFilter += fmt.Sprintf("!%s", f.Key)
+			}
+		}
+	}
+
+	// 2. Process standard metav1.LabelSelector
+	if resourceSelector.Selector != nil {
+		selector, err := metav1.LabelSelectorAsSelector(resourceSelector.Selector)
+		if err != nil {
+			return "", fmt.Errorf("failed to convert Selector to internal selector: %w", err)
+		}
+
+		selectorString := selector.String()
+		if selectorString != "" {
+			if labelFilter != "" {
+				// Combine existing labelFilter with the new selector (comma means AND)
+				labelFilter += "," + selectorString
+			} else {
+				labelFilter = selectorString
+			}
+		}
+	}
+
+	return labelFilter, nil
+}
+
 func isMatch(u *unstructured.Unstructured, resourceSelector *libsveltosv1beta1.ResourceSelector,
 	logger logr.Logger) (bool, error) {
 
@@ -181,32 +233,6 @@ func isMatch(u *unstructured.Unstructured, resourceSelector *libsveltosv1beta1.R
 	}
 
 	return isMatchForLua(u, resourceSelector.Evaluate, logger)
-}
-
-func addLabelFilters(labelFilters []libsveltosv1beta1.LabelFilter) string {
-	labelFilter := ""
-	if len(labelFilters) > 0 {
-		for i := range labelFilters {
-			if labelFilter != "" {
-				labelFilter += ","
-			}
-			f := labelFilters[i]
-			switch f.Operation {
-			case libsveltosv1beta1.OperationEqual:
-				labelFilter += fmt.Sprintf("%s=%s", f.Key, f.Value)
-			case libsveltosv1beta1.OperationDifferent:
-				labelFilter += fmt.Sprintf("%s!=%s", f.Key, f.Value)
-			case libsveltosv1beta1.OperationHas:
-				// Key exists, value is not checked
-				labelFilter += f.Key
-			case libsveltosv1beta1.OperationDoesNotHave:
-				// Key does not exist
-				labelFilter += fmt.Sprintf("!%s", f.Key)
-			}
-		}
-	}
-
-	return labelFilter
 }
 
 func isMatchForLua(resource *unstructured.Unstructured, script string, logger logr.Logger) (bool, error) {
