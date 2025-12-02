@@ -377,14 +377,20 @@ func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context
 			return err
 		}
 
-		for i := range config.Contexts {
-			cc := &config.Contexts[i]
-			saNamespace := cc.Context.Namespace
-			saName := cc.Context.AuthInfo
+		saNamespace, saName, err := r.getServiceAccountDetails(ctx, sveltosCluster, remoteConfig, logger)
+		if err != nil {
+			return err
+		}
 
-			if sveltosCluster.Spec.TokenRequestRenewalOption.SANamespace != "" && sveltosCluster.Spec.TokenRequestRenewalOption.SAName != "" {
-				saNamespace = sveltosCluster.Spec.TokenRequestRenewalOption.SANamespace
-				saName = sveltosCluster.Spec.TokenRequestRenewalOption.SAName
+		for i := range config.Contexts {
+			if saName == "" {
+				cc := &config.Contexts[i]
+				saNamespace = cc.Context.Namespace
+				saName = cc.Context.AuthInfo
+			}
+
+			if saNamespace == "" || saName == "" {
+				continue
 			}
 
 			tokenRequest, err := r.getServiceAccountTokenRequest(ctx, remoteConfig, saNamespace, saName, saExpirationInSecond, logger)
@@ -653,4 +659,92 @@ func (r *SveltosClusterReconciler) reconcilePullModeCluster(
 	updateClusterConnectionStatusMetric(string(libsveltosv1beta1.ClusterTypeSveltos),
 		sveltosClusterScope.SveltosCluster.Namespace, sveltosClusterScope.SveltosCluster.Name,
 		sveltosClusterScope.SveltosCluster.Status.ConnectionStatus, logger)
+}
+
+// serviceAccountInfo holds the parsed ServiceAccount details
+type serviceAccountInfo struct {
+	Namespace string
+	Name      string
+}
+
+// ParseServiceAccountUsername parses a Kubernetes username and extracts
+// the ServiceAccount namespace and name if it's a ServiceAccount.
+// ServiceAccount usernames follow the format: system:serviceaccount:NAMESPACE:NAME
+func ParseServiceAccountUsername(username string) (*serviceAccountInfo, bool) {
+	const prefix = "system:serviceaccount:"
+
+	if !strings.HasPrefix(username, prefix) {
+		return nil, false
+	}
+
+	// Remove the prefix
+	remainder := strings.TrimPrefix(username, prefix)
+
+	const two = 2
+	// Split by ":" to get namespace and name
+	parts := strings.SplitN(remainder, ":", two)
+	if len(parts) != two {
+		return nil, false
+	}
+
+	return &serviceAccountInfo{
+		Namespace: parts[0],
+		Name:      parts[1],
+	}, true
+}
+
+func whoami(ctx context.Context, config *rest.Config, logger logr.Logger) (*serviceAccountInfo, error) {
+	// Create clientset
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("error creating clientset: %w", err)
+	}
+
+	// Create SelfSubjectReview
+	review := &authenticationv1.SelfSubjectReview{}
+
+	result, err := clientset.AuthenticationV1().SelfSubjectReviews().Create(
+		ctx, review, metav1.CreateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("error creating SelfSubjectReview: %w", err)
+	}
+
+	username := result.Status.UserInfo.Username
+	if saInfo, ok := ParseServiceAccountUsername(username); ok {
+		logger.V(logs.LogDebug).Info(fmt.Sprintf("ServiceAccount %s", *saInfo))
+		return saInfo, nil
+	}
+
+	return nil, nil
+}
+
+func (r *SveltosClusterReconciler) getServiceAccountDetails(ctx context.Context,
+	sveltosCluster *libsveltosv1beta1.SveltosCluster, config *rest.Config, logger logr.Logger,
+) (saNamespace, saName string, err error) {
+
+	if sveltosCluster.Spec.TokenRequestRenewalOption != nil &&
+		sveltosCluster.Spec.TokenRequestRenewalOption.SANamespace != "" &&
+		sveltosCluster.Spec.TokenRequestRenewalOption.SAName != "" {
+
+		saNamespace = sveltosCluster.Spec.TokenRequestRenewalOption.SANamespace
+		saName = sveltosCluster.Spec.TokenRequestRenewalOption.SAName
+	} else {
+		saInfo, err := whoami(ctx, config, logger)
+		if err != nil {
+			logger.Error(err, "failed to run whoami")
+			return "", "", err
+		}
+		if saInfo != nil {
+			saNamespace = saInfo.Namespace
+			saName = saInfo.Name
+		}
+	}
+
+	if saNamespace != "" && saName != "" {
+		logger.V(logs.LogDebug).Info(fmt.Sprintf(
+			"Using ServiceAccount %s/%s to renew token",
+			saNamespace, saName))
+	}
+
+	return saNamespace, saName, nil
 }
