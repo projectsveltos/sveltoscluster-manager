@@ -20,6 +20,7 @@ package fv_test
 import (
 	"context"
 	"fmt"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -80,7 +81,8 @@ var _ = Describe("Sveltos License", func() {
 		Expect(currentSveltosLicense.Status.Message).To(Equal(""))
 		Expect(currentSveltosLicense.Status.MaxClusters).ToNot(BeNil())
 		Expect(*currentSveltosLicense.Status.MaxClusters).To(Equal(1))
-		Expect(currentSveltosLicense.Status.ExpirationDate.String()).To(Equal("2026-07-26 14:31:53 +0000 UTC"))
+		actualUTCStr := currentSveltosLicense.Status.ExpirationDate.Time.In(time.UTC).String()
+		Expect(actualUTCStr).To(Equal("2026-07-26 14:31:53 +0000 UTC"))
 
 		Expect(k8sClient.Get(context.TODO(),
 			types.NamespacedName{Name: sveltosLicense.Name},

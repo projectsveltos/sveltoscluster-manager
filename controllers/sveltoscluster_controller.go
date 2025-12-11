@@ -17,7 +17,9 @@ limitations under the License.
 package controllers
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -511,10 +513,25 @@ current-context: sveltos-context`
 func handleAutomaticPauseUnPause(sveltosCluster *libsveltosv1beta1.SveltosCluster,
 	currentTime time.Time, logger logr.Logger) {
 
+	currentTime = currentTime.UTC()
+
 	if sveltosCluster.Spec.ActiveWindow == nil {
 		sveltosCluster.Status.NextUnpause = nil
 		sveltosCluster.Status.NextPause = nil
 		return
+	}
+
+	// Calculate the hash of the current spec.ActiveWindow
+	currentHashBytes := calculateActiveWindowHash(sveltosCluster.Spec.ActiveWindow)
+
+	forceRecalculate := false
+	if !bytes.Equal(sveltosCluster.Status.ActiveWindowHash, currentHashBytes) {
+		logger.V(logs.LogInfo).Info(
+			"ActiveWindow spec changed (hash mismatch). Forcing NextPause/NextUnpause recalculation.")
+		// Reset status times to force them to be recalculated below
+		sveltosCluster.Status.NextUnpause = nil
+		sveltosCluster.Status.NextPause = nil
+		forceRecalculate = true
 	}
 
 	if sveltosCluster.Status.NextPause != nil && sveltosCluster.Status.NextUnpause != nil {
@@ -528,41 +545,85 @@ func handleAutomaticPauseUnPause(sveltosCluster *libsveltosv1beta1.SveltosCluste
 			return
 		} else if currentTime.After(sveltosCluster.Status.NextPause.Time) {
 			sveltosCluster.Spec.Paused = true
+			// Execution continues to recalculate the next window since the current window has passed.
 		} else if currentTime.Before(sveltosCluster.Status.NextPause.Time) {
-			// Updates NextFrom and NextTo only once current time is past NextTo
-			return
+			// This path is reached when currentTime is between NextUnpause and NextPause (i.e., paused)
+			// and NextUnpause has already passed. The original code returned here.
+			// If we are currently *in* the unpaused window, the first `if` handled it.
+			// If `forceRecalculate` is false, and we are not past the window, we can return.
+			if !forceRecalculate {
+				return
+			}
 		}
 	} else {
 		sveltosCluster.Spec.Paused = true
 	}
 
+	if err := recalculateNextUnpause(sveltosCluster, currentTime, logger); err != nil {
+		// Since the error is logged inside the helper, we just return here.
+		return
+	}
+
+	if err := recalculateNextPause(sveltosCluster, currentTime, logger); err != nil {
+		return
+	}
+
+	// --- Update the Hash field on successful calculation ---
+	if sveltosCluster.Status.NextUnpause != nil && sveltosCluster.Status.NextPause != nil {
+		sveltosCluster.Status.ActiveWindowHash = currentHashBytes
+	}
+}
+
+func recalculateNextUnpause(sveltosCluster *libsveltosv1beta1.SveltosCluster,
+	currentTime time.Time, logger logr.Logger) error {
+
+	// Recalculate NextUnpause if it's nil (i.e., forced or first run) OR the current time
+	// has passed the previously calculated NextUnpause time.
 	if sveltosCluster.Status.NextUnpause == nil || currentTime.After(sveltosCluster.Status.NextUnpause.Time) {
 		lastRunTime := sveltosCluster.CreationTimestamp
+		// Ensure lastRunTime is derived from the *current* NextUnpause if it exists
 		if sveltosCluster.Status.NextUnpause != nil {
-			lastRunTime = *sveltosCluster.Status.NextUnpause
+			// Use the time stored in status for calculation base
+			lastRunTime = metav1.Time{Time: sveltosCluster.Status.NextUnpause.UTC()}
 		}
 
 		nextFromTime, err := getNextScheduleTime(sveltosCluster.Spec.ActiveWindow.From, &lastRunTime, currentTime)
 		if err != nil {
 			logger.V(logs.LogInfo).Error(err, "failed to get next from time")
-			return
+			return err
 		}
-		sveltosCluster.Status.NextUnpause = &metav1.Time{Time: *nextFromTime}
+
+		// Store the calculated time explicitly in UTC
+		sveltosCluster.Status.NextUnpause = &metav1.Time{Time: nextFromTime.UTC()}
 	}
 
+	return nil
+}
+
+func recalculateNextPause(sveltosCluster *libsveltosv1beta1.SveltosCluster,
+	currentTime time.Time, logger logr.Logger) error {
+
+	// Recalculate NextPause if it's nil (i.e., forced or first run) OR the current time
+	// has passed the previously calculated NextPause time.
 	if sveltosCluster.Status.NextPause == nil || currentTime.After(sveltosCluster.Status.NextPause.Time) {
 		lastRunTime := sveltosCluster.CreationTimestamp
+		// Ensure lastRunTime is derived from the *current* NextPause if it exists
 		if sveltosCluster.Status.NextPause != nil {
-			lastRunTime = *sveltosCluster.Status.NextPause
+			// Use the time stored in status for calculation base
+			lastRunTime = metav1.Time{Time: sveltosCluster.Status.NextPause.UTC()}
 		}
 
 		nextToTime, err := getNextScheduleTime(sveltosCluster.Spec.ActiveWindow.To, &lastRunTime, currentTime)
 		if err != nil {
 			logger.V(logs.LogInfo).Error(err, "failed to get next to time")
+			return err
 		}
 
-		sveltosCluster.Status.NextPause = &metav1.Time{Time: *nextToTime}
+		// Store the calculated time explicitly in UTC
+		sveltosCluster.Status.NextPause = &metav1.Time{Time: nextToTime.UTC()}
 	}
+
+	return nil
 }
 
 // getNextScheduleTime gets the time of next schedule after last scheduled and before now
@@ -747,4 +808,18 @@ func (r *SveltosClusterReconciler) getServiceAccountDetails(ctx context.Context,
 	}
 
 	return saNamespace, saName, nil
+}
+
+func calculateActiveWindowHash(activeWindow *libsveltosv1beta1.ActiveWindow) []byte {
+	if activeWindow == nil {
+		return nil
+	}
+
+	h := sha256.New()
+	var config string
+	config += activeWindow.From
+	config += activeWindow.To
+
+	h.Write([]byte(config))
+	return h.Sum(nil)
 }

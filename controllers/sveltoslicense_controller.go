@@ -130,7 +130,7 @@ func (r *SveltosLicenseReconciler) validateSveltosLicense(ctx context.Context,
 
 	if result.IsExpired {
 		sveltosLicense.Status.Status = libsveltosv1beta1.LicenseStatusExpired
-		sveltosLicense.Status.ExpirationDate = &metav1.Time{Time: result.Payload.ExpirationDate}
+		sveltosLicense.Status.ExpirationDate = &metav1.Time{Time: result.Payload.ExpirationDate.UTC()}
 		sveltosLicense.Status.Message = result.Message
 		return sveltosLicense, result.Payload
 	}
