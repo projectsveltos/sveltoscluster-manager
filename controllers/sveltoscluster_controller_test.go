@@ -239,12 +239,12 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 
 		// Next unpause coming friday at 8PM
 		Expect(sveltosCluster.Status.NextUnpause).ToNot(BeNil())
-		expectedUnpause := time.Date(2024, time.August, 2, 20, 0, 0, 0, loc)
+		expectedUnpause := time.Date(2024, time.August, 2, 20, 0, 0, 0, time.UTC)
 		Expect(sveltosCluster.Status.NextUnpause.Time).To(Equal(expectedUnpause))
 
 		// Next pause coming monday at 7AM
 		Expect(sveltosCluster.Status.NextPause).ToNot(BeNil())
-		expectedPause := time.Date(2024, time.August, 5, 7, 0, 0, 0, loc)
+		expectedPause := time.Date(2024, time.August, 5, 7, 0, 0, 0, time.UTC)
 		Expect(sveltosCluster.Status.NextPause.Time).To(Equal(expectedPause))
 
 		Expect(sveltosCluster.Spec.Paused).To(BeTrue())
@@ -267,13 +267,123 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 
 		// when time is past next pause, Paused will be set to true and NextPause
 		// NextUnpause updated
-		monday8AM := time.Date(2024, time.August, 5, 8, 0, 0, 0, loc)
-		controllers.HandleAutomaticPauseUnPause(sveltosCluster, monday8AM, logger)
+		// 9:00 AM CEST converts to 7:00 AM UTC. We need it to be PAST 7:00 AM UTC.
+		mondayLocalTime := time.Date(2024, time.August, 5, 9, 1, 0, 0, loc)
+		controllers.HandleAutomaticPauseUnPause(sveltosCluster, mondayLocalTime, logger)
 		Expect(sveltosCluster.Spec.Paused).To(BeTrue())
-		expectedUnpause = time.Date(2024, time.August, 9, 20, 0, 0, 0, loc)
-		expectedPause = time.Date(2024, time.August, 12, 7, 0, 0, 0, loc)
+		expectedUnpause = time.Date(2024, time.August, 9, 20, 0, 0, 0, time.UTC)
+		expectedPause = time.Date(2024, time.August, 12, 7, 0, 0, 0, time.UTC)
 		Expect(sveltosCluster.Status.NextPause.Time).To(Equal(expectedPause))
 		Expect(sveltosCluster.Status.NextUnpause.Time).To(Equal(expectedUnpause))
+	})
+
+	It("Hash mismatch (ActiveWindow change) forces recalculation of NextPause/NextUnpause", func() {
+		// 1. Initial setup: Cluster paused, with a long future window
+		initialFrom := "0 10 * * 1" // Monday 10 AM
+		initialTo := "0 11 * * 1"   // Monday 11 AM
+		sveltosCluster.Spec.ActiveWindow = &libsveltosv1beta1.ActiveWindow{
+			From: initialFrom,
+			To:   initialTo,
+		}
+
+		loc, err := time.LoadLocation("Europe/Rome")
+		Expect(err).To(BeNil())
+
+		// Start time: Tuesday, well after the initial window, so it's paused.
+		startTuesday := time.Date(2024, time.July, 30, 12, 0, 0, 0, loc)
+		sveltosCluster.CreationTimestamp = metav1.Time{Time: startTuesday}
+
+		// --- First Run: Calculates original window ---
+		controllers.HandleAutomaticPauseUnPause(sveltosCluster, startTuesday, logger)
+
+		// Expected initial status (Next Monday)
+		initialUnpause := time.Date(2024, time.August, 5, 10, 0, 0, 0, time.UTC)
+		initialPause := time.Date(2024, time.August, 5, 11, 0, 0, 0, time.UTC)
+		Expect(sveltosCluster.Status.NextUnpause.Time).To(Equal(initialUnpause))
+		Expect(sveltosCluster.Status.NextPause.Time).To(Equal(initialPause))
+		Expect(sveltosCluster.Status.ActiveWindowHash).ToNot(BeNil())
+
+		// Save the initial hash for later assertion
+		initialHash := sveltosCluster.Status.ActiveWindowHash
+
+		// 3. CHANGE the ActiveWindow spec (Bug verification point)
+		newFrom := "0 15 * * 5" // New: Friday 3 PM
+		newTo := "0 16 * * 5"   // New: Friday 4 PM
+		sveltosCluster.Spec.ActiveWindow = &libsveltosv1beta1.ActiveWindow{
+			From: newFrom,
+			To:   newTo,
+		}
+
+		// Set Generation to mimic a spec update (not strictly needed, but good practice)
+		sveltosCluster.Generation = 2
+
+		// 4. Run the handler again *before* the initialNextUnpause time (Initial time: Aug 5th)
+		nextWednesday := time.Date(2024, time.July, 31, 12, 0, 0, 0, loc)
+		controllers.HandleAutomaticPauseUnPause(sveltosCluster, nextWednesday, logger)
+
+		// 5. ASSERT that the NextPause/NextUnpause times reflect the new schedule
+		// The bug was that these times would *not* update here.
+
+		// Expected NEW status (Next Friday)
+		newExpectedUnpause := time.Date(2024, time.August, 2, 15, 0, 0, 0, time.UTC)
+		newExpectedPause := time.Date(2024, time.August, 2, 16, 0, 0, 0, time.UTC)
+
+		Expect(sveltosCluster.Status.NextUnpause.Time).To(Equal(newExpectedUnpause),
+			"NextUnpause should be recalculated based on the new 'From' schedule")
+		Expect(sveltosCluster.Status.NextPause.Time).To(Equal(newExpectedPause),
+			"NextPause should be recalculated based on the new 'To' schedule")
+
+		// Assert the hash was updated
+		Expect(sveltosCluster.Status.ActiveWindowHash).ToNot(Equal(initialHash),
+			"ActiveWindowHash must be updated to the new hash")
+		Expect(sveltosCluster.Spec.Paused).To(BeTrue(),
+			"Cluster should still be paused as current time is not in the new window")
+	})
+
+	It("Unrelated spec change (same ActiveWindowHash) does NOT force time recalculation", func() {
+		// 1. Initial setup: Set a schedule and run once
+		sveltosCluster.Spec.ActiveWindow = &libsveltosv1beta1.ActiveWindow{
+			From: "0 10 * * 1", // Monday 10 AM
+			To:   "0 11 * * 1", // Monday 11 AM
+		}
+		loc, err := time.LoadLocation("Europe/Rome")
+		Expect(err).To(BeNil())
+		startTuesday := time.Date(2024, time.July, 30, 12, 0, 0, 0, loc)
+		sveltosCluster.CreationTimestamp = metav1.Time{Time: startTuesday}
+
+		// --- First Run: Calculates original window ---
+		controllers.HandleAutomaticPauseUnPause(sveltosCluster, startTuesday, logger)
+
+		// Save the stable status times and hash
+		initialUnpause := sveltosCluster.Status.NextUnpause.Time
+		initialPause := sveltosCluster.Status.NextPause.Time
+		initialHash := sveltosCluster.Status.ActiveWindowHash
+		Expect(sveltosCluster.Spec.Paused).To(BeTrue())
+
+		// 2. CHANGE an unrelated field
+		// We change Spec.Paused manually and force a new reconcile loop (via Generation)
+		sveltosCluster.Spec.Paused = false                  // User manually unpauses cluster
+		sveltosCluster.Spec.ConsecutiveFailureThreshold = 5 // Another unrelated spec change
+		sveltosCluster.Generation = 2                       // Generation changes, but hash should not
+
+		// 3. Run the handler again at a time before any scheduled event
+		nextWednesday := time.Date(2024, time.July, 31, 12, 0, 0, 0, loc)
+		controllers.HandleAutomaticPauseUnPause(sveltosCluster, nextWednesday, logger)
+
+		// 4. ASSERT that the times DID NOT change
+		// The hash check should pass, causing the routine to hit an early 'return'
+		// in the first pause/unpause conditional block, skipping recalculation.
+
+		Expect(sveltosCluster.Status.NextUnpause.Time).To(Equal(initialUnpause),
+			"NextUnpause time must remain unchanged")
+		Expect(sveltosCluster.Status.NextPause.Time).To(Equal(initialPause),
+			"NextPause time must remain unchanged")
+		Expect(sveltosCluster.Status.ActiveWindowHash).To(Equal(initialHash),
+			"ActiveWindowHash must be the same")
+
+		// Assert Spec.Paused is reset back to true because the time is before NextUnpause
+		// (This tests the existing core logic after the hash check passes)
+		Expect(sveltosCluster.Spec.Paused).To(BeTrue())
 	})
 
 	It("getTokenExpiration returns token expiration time", func() {
