@@ -88,7 +88,7 @@ type checkStatus struct {
 
 func (r *SveltosClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
 	logger := ctrl.LoggerFrom(ctx)
-	logger.V(logs.LogInfo).Info("Reconciling")
+	logger.V(logs.LogDebug).Info("Reconciling")
 
 	// Fecth the sveltosCluster instance
 	sveltosCluster := &libsveltosv1beta1.SveltosCluster{}
@@ -165,7 +165,7 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 	s := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(s); err != nil {
 		errorMessage := err.Error()
-		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get scheme: %v", err))
+		logger.V(logs.LogInfo).Error(err, "failed to get scheme")
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 		updateConnectionStatus(sveltosClusterScope, logger)
 		return
@@ -176,7 +176,7 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 		sveltosClusterScope.SveltosCluster.Namespace, sveltosClusterScope.SveltosCluster.Name)
 	if err != nil {
 		errorMessage := err.Error()
-		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get client: %v", err))
+		logger.V(logs.LogInfo).Error(err, "failed to get client")
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 		updateConnectionStatus(sveltosClusterScope, logger)
 		return
@@ -187,7 +187,7 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 	c, err = client.New(config, client.Options{Scheme: s})
 	if err != nil {
 		errorMessage := err.Error()
-		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get client: %v", err))
+		logger.V(logs.LogInfo).Error(err, "failed to get client")
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 		updateConnectionStatus(sveltosClusterScope, logger)
 		return
@@ -200,7 +200,7 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 	err = c.Get(context.TODO(), types.NamespacedName{Name: "kube-system"}, ns)
 	if err != nil && !apierrors.IsNotFound(err) {
 		errorMessage := err.Error()
-		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get kube-system namespace: %v", err))
+		logger.V(logs.LogInfo).Error(err, "failed to get kube-system namespace")
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 	} else {
 		// Always renew token if needed
@@ -220,7 +220,7 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 			sveltosClusterScope.SveltosCluster.Status.Ready = true
 			currentVersion, err := k8s_utils.GetKubernetesVersion(ctx, config, logger)
 			if err != nil {
-				logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get cluster kubernetes version %v", err))
+				logger.V(logs.LogInfo).Error(err, "failed to get cluster kubernetes version")
 				errorMessage := err.Error()
 				sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 			} else {
@@ -283,7 +283,7 @@ func (r *SveltosClusterReconciler) isClusterAShardMatch(ctx context.Context,
 			return true, nil
 		}
 
-		logger.V(logs.LogDebug).Info(fmt.Sprintf("failed to get cluster: %v", err))
+		logger.V(logs.LogDebug).Error(err, "failed to get cluster")
 		return false, err
 	}
 
@@ -308,7 +308,7 @@ func (r *SveltosClusterReconciler) shouldRenewTokenRequest(sveltosClusterScope *
 	if sveltosCluster.Status.LastReconciledTokenRequestAt != "" {
 		parsedTime, err := time.Parse(time.RFC3339, sveltosCluster.Status.LastReconciledTokenRequestAt)
 		if err != nil {
-			logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to parse LastReconciledTokenRequestAt: %v. Using CreationTimestamep", err))
+			logger.V(logs.LogInfo).Error(err, "failed to parse LastReconciledTokenRequestAt. Using CreationTimestamep")
 		} else {
 			lastRenewal = metav1.Time{Time: parsedTime}
 		}
@@ -360,14 +360,14 @@ func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context
 		data, err := clusterproxy.GetSveltosSecretData(ctx, logger, r.Client,
 			sveltosCluster.Namespace, sveltosCluster.Name)
 		if err != nil {
-			logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get Secret with Kubeconfig: %v", err))
+			logger.V(logs.LogInfo).Error(err, "failed to get Secret with Kubeconfig")
 			return err
 		}
 
 		var u *unstructured.Unstructured
 		u, err = k8s_utils.GetUnstructured(data)
 		if err != nil {
-			logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get unstructured %v", err))
+			logger.V(logs.LogInfo).Error(err, "failed to get unstructured")
 			return err
 		}
 
@@ -375,7 +375,7 @@ func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context
 		err = runtime.DefaultUnstructuredConverter.
 			FromUnstructured(u.UnstructuredContent(), config)
 		if err != nil {
-			logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get convert unstructured to v1.Config %v", err))
+			logger.V(logs.LogInfo).Error(err, "failed to get convert unstructured to v1.Config")
 			return err
 		}
 
@@ -397,7 +397,7 @@ func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context
 
 			tokenRequest, err := r.getServiceAccountTokenRequest(ctx, remoteConfig, saNamespace, saName, saExpirationInSecond, logger)
 			if err != nil {
-				logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get tokenRequest %v", err))
+				logger.V(logs.LogInfo).Error(err, "failed to get tokenRequest")
 				continue
 			}
 
@@ -409,7 +409,7 @@ func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context
 			data := r.getKubeconfigFromToken(saNamespace, saName, tokenRequest.Token, remoteConfig)
 			err = clusterproxy.UpdateSveltosSecretData(ctx, logger, r.Client, sveltosCluster.Namespace, sveltosCluster.Name, data, key)
 			if err != nil {
-				logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to update SveltosCluster's Secret %v", err))
+				logger.V(logs.LogInfo).Error(err, "failed to update SveltosCluster's Secret")
 				continue
 			}
 
@@ -445,9 +445,9 @@ func (r *SveltosClusterReconciler) getServiceAccountTokenRequest(ctx context.Con
 	tokenRequest, err = clientset.CoreV1().ServiceAccounts(serviceAccountNamespace).
 		CreateToken(ctx, serviceAccountName, treq, metav1.CreateOptions{})
 	if err != nil {
-		logger.V(logs.LogDebug).Info(
-			fmt.Sprintf("Failed to create token for ServiceAccount %s/%s: %v",
-				serviceAccountNamespace, serviceAccountName, err))
+		logger.V(logs.LogDebug).Error(err,
+			fmt.Sprintf("Failed to create token for ServiceAccount %s/%s",
+				serviceAccountNamespace, serviceAccountName))
 		return nil, err
 	}
 
@@ -660,7 +660,7 @@ func (r *SveltosClusterReconciler) adjustTokenRequestRenewalOption(
 
 	expirationTime, err := r.getTokenExpiration(jwt)
 	if err != nil {
-		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get token expiration: %v", err))
+		logger.V(logs.LogInfo).Error(err, "failed to get token expiration")
 		return tokenRequestRenewalOption.RenewTokenRequestInterval
 	}
 

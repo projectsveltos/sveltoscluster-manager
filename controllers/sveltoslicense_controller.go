@@ -18,7 +18,6 @@ package controllers
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -77,7 +76,7 @@ func (r *SveltosLicenseReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	sveltosLicense, payload = r.validateSveltosLicense(ctx, sveltosLicense, logger)
 	err := r.Status().Update(ctx, sveltosLicense)
 	if err != nil {
-		logger.V(logs.LogDebug).Info(fmt.Sprintf("failed to update SveltosLicense Status: %v", err))
+		logger.V(logs.LogDebug).Error(err, "failed to update SveltosLicense Status")
 		return reconcile.Result{Requeue: true, RequeueAfter: normalRequeueAfter}, nil
 	}
 
@@ -104,7 +103,7 @@ func (r *SveltosLicenseReconciler) validateSveltosLicense(ctx context.Context,
 
 	publicKey, err := license.GetPublicKey()
 	if err != nil {
-		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get public key: %v", err))
+		logger.V(logs.LogInfo).Error(err, "failed to get public key")
 		sveltosLicense.Status.Status = libsveltosv1beta1.LicenseStatusInvalid
 	}
 
