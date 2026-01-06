@@ -50,6 +50,7 @@ import (
 	"github.com/projectsveltos/libsveltos/lib/clusterproxy"
 	"github.com/projectsveltos/libsveltos/lib/k8s_utils"
 	logs "github.com/projectsveltos/libsveltos/lib/logsettings"
+	"github.com/projectsveltos/libsveltos/lib/pullmode"
 	"github.com/projectsveltos/libsveltos/lib/sharding"
 	"github.com/projectsveltos/sveltoscluster-manager/pkg/scope"
 )
@@ -712,7 +713,8 @@ func (r *SveltosClusterReconciler) reconcilePullModeCluster(
 	maxAllowedAge := 10 * time.Minute
 
 	if lastReportAge > maxAllowedAge {
-		msg := "AgentLastReportTime is older than max allowed age."
+		keepAliveError := &pullmode.AgentHeartbeatTimeoutError{}
+		msg := keepAliveError.Error()
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &msg
 	}
 
