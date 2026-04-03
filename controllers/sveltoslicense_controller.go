@@ -105,9 +105,16 @@ func (r *SveltosLicenseReconciler) validateSveltosLicense(ctx context.Context,
 	if err != nil {
 		logger.V(logs.LogInfo).Error(err, "failed to get public key")
 		sveltosLicense.Status.Status = libsveltosv1beta1.LicenseStatusInvalid
+		return sveltosLicense, nil
 	}
 
 	result := license.VerifyLicenseSecret(ctx, r.Client, publicKey, logger)
+
+	if result.Payload == nil {
+		logger.V(logs.LogInfo).Info("failed to get payload")
+		sveltosLicense.Status.Status = libsveltosv1beta1.LicenseStatusInvalid
+		return sveltosLicense, nil
+	}
 
 	if result.Payload != nil {
 		sveltosLicense.Status.MaxClusters = &result.Payload.MaxClusters
