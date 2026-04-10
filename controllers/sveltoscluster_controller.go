@@ -406,7 +406,7 @@ func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context
 				r.adjustTokenRequestRenewalOption(sveltosCluster.Spec.TokenRequestRenewalOption, tokenRequest, logger)
 
 			logger.V(logs.LogDebug).Info("Get Kubeconfig from TokenRequest")
-			key := "re-kubeconfig"
+			key := r.getKubeconfigKey(sveltosCluster)
 			data := r.getKubeconfigFromToken(saNamespace, saName, tokenRequest.Token, remoteConfig)
 			err = clusterproxy.UpdateSveltosSecretData(ctx, logger, r.Client, sveltosCluster.Namespace, sveltosCluster.Name, data, key)
 			if err != nil {
@@ -414,12 +414,30 @@ func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context
 				continue
 			}
 
-			sveltosCluster.Spec.KubeconfigKeyName = key
+			// Only update the Spec if the key actually changed.
+			// This prevents unnecessary API calls and GitOps drift.
+			if sveltosCluster.Spec.KubeconfigKeyName != key {
+				sveltosCluster.Spec.KubeconfigKeyName = key
+			}
 			sveltosCluster.Status.LastReconciledTokenRequestAt = time.Now().Format(time.RFC3339)
 		}
 	}
 
 	return nil
+}
+
+// getKubeconfigKey returns the Secret key name to use when storing a renewed kubeconfig.
+// If Spec.TokenRequestRenewalOption.KubeconfigKeyName is set, it returns that value,
+// allowing for in-place updates (useful in GitOps scenarios).
+// Otherwise, it returns the default "re-kubeconfig" to maintain backward compatibility.
+func (r *SveltosClusterReconciler) getKubeconfigKey(sveltosCluster *libsveltosv1beta1.SveltosCluster) string {
+	if sveltosCluster.Spec.TokenRequestRenewalOption != nil &&
+		sveltosCluster.Spec.TokenRequestRenewalOption.KubeconfigKeyName != nil &&
+		*sveltosCluster.Spec.TokenRequestRenewalOption.KubeconfigKeyName != "" {
+
+		return *sveltosCluster.Spec.TokenRequestRenewalOption.KubeconfigKeyName
+	}
+	return "re-kubeconfig"
 }
 
 // getServiceAccountTokenRequest returns token for a serviceaccount
