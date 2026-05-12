@@ -30,11 +30,11 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
+	"go.yaml.in/yaml/v2"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -365,18 +365,10 @@ func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context
 			return err
 		}
 
-		var u *unstructured.Unstructured
-		u, err = k8s_utils.GetUnstructured(data)
-		if err != nil {
-			logger.V(logs.LogInfo).Error(err, "failed to get unstructured")
-			return err
-		}
-
 		config := &apiv1.Config{}
-		err = runtime.DefaultUnstructuredConverter.
-			FromUnstructured(u.UnstructuredContent(), config)
+		err = yaml.Unmarshal(data, config)
 		if err != nil {
-			logger.V(logs.LogInfo).Error(err, "failed to get convert unstructured to v1.Config")
+			logger.V(logs.LogInfo).Error(err, "failed to unmarshal kubeconfig")
 			return err
 		}
 
