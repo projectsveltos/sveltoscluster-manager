@@ -62,6 +62,10 @@ var (
 const (
 	timeout         = 40 * time.Second
 	pollingInterval = 2 * time.Second
+
+	secretDataKey  = "data"
+	cronMonday10AM = "0 10 * * 1"
+	cronMonday11AM = "0 11 * * 1"
 )
 
 func TestControllers(t *testing.T) {

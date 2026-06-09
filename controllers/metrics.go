@@ -27,25 +27,30 @@ import (
 const (
 	StatusHealthy      = 0.0
 	StatusDisconnected = 1.0
+
+	labelClusterType       = "cluster_type"
+	labelClusterNamespace  = "cluster_namespace"
+	labelClusterName       = "cluster_name"
+	labelKubernetesVersion = "kubernetes_version"
 )
 
 var (
 	clusterConnectivityGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "projectsveltos",
+			Namespace: getSveltosNamespace(),
 			Name:      "cluster_connectivity_status",
 			Help:      "Connectivity status of each cluster (0 for healthy, 1 for disconnected)",
 		},
-		[]string{"cluster_type", "cluster_namespace", "cluster_name"},
+		[]string{labelClusterType, labelClusterNamespace, labelClusterName},
 	)
 
 	kubernetesVersionGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "projectsveltos",
+			Namespace: getSveltosNamespace(),
 			Name:      "kubernetes_version_info",
 			Help:      "Kubernetes version (major.minor.patch) of each cluster",
 		},
-		[]string{"cluster_type", "cluster_namespace", "cluster_name", "kubernetes_version"},
+		[]string{labelClusterType, labelClusterNamespace, labelClusterName, labelKubernetesVersion},
 	)
 )
 
@@ -62,9 +67,9 @@ func updateClusterConnectionStatusMetric(clusterType, namespace, name string, st
 	}
 
 	clusterConnectivityGauge.With(prometheus.Labels{
-		"cluster_type":      clusterType,
-		"cluster_namespace": namespace,
-		"cluster_name":      name,
+		labelClusterType:      clusterType,
+		labelClusterNamespace: namespace,
+		labelClusterName:      name,
 	}).Set(val)
 
 	logger.V(logs.LogVerbose).Info(fmt.Sprintf("Updated connection status metric for cluster %s/%s to %f",
@@ -73,10 +78,10 @@ func updateClusterConnectionStatusMetric(clusterType, namespace, name string, st
 
 func updateKubernetesVersionMetric(clusterType, namespace, name, version string, logger logr.Logger) {
 	kubernetesVersionGauge.With(prometheus.Labels{
-		"cluster_type":       clusterType,
-		"cluster_namespace":  namespace,
-		"cluster_name":       name,
-		"kubernetes_version": version,
+		labelClusterType:       clusterType,
+		labelClusterNamespace:  namespace,
+		labelClusterName:       name,
+		labelKubernetesVersion: version,
 	}).Set(1)
 
 	logger.V(logs.LogVerbose).Info(fmt.Sprintf("Updated Kubernetes version metric for cluster %s/%s  %s",

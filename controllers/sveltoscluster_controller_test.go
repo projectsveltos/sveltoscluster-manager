@@ -62,7 +62,7 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 				Name:      sveltosCluster.Name + "-sveltos-kubeconfig",
 			},
 			Data: map[string][]byte{
-				"data": testEnv.Kubeconfig,
+				secretDataKey: testEnv.Kubeconfig,
 			},
 		}
 
@@ -115,7 +115,7 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 				Name:      sveltosCluster.Name + "-sveltos-kubeconfig",
 			},
 			Data: map[string][]byte{
-				"data": []byte("not a valid kubeconfig"),
+				secretDataKey: []byte("not a valid kubeconfig"),
 			},
 		}
 
@@ -279,8 +279,8 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 
 	It("Hash mismatch (ActiveWindow change) forces recalculation of NextPause/NextUnpause", func() {
 		// 1. Initial setup: Cluster paused, with a long future window
-		initialFrom := "0 10 * * 1" // Monday 10 AM
-		initialTo := "0 11 * * 1"   // Monday 11 AM
+		initialFrom := cronMonday10AM // Monday 10 AM
+		initialTo := cronMonday11AM   // Monday 11 AM
 		sveltosCluster.Spec.ActiveWindow = &libsveltosv1beta1.ActiveWindow{
 			From: initialFrom,
 			To:   initialTo,
@@ -343,8 +343,8 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 	It("Unrelated spec change (same ActiveWindowHash) does NOT force time recalculation", func() {
 		// 1. Initial setup: Set a schedule and run once
 		sveltosCluster.Spec.ActiveWindow = &libsveltosv1beta1.ActiveWindow{
-			From: "0 10 * * 1", // Monday 10 AM
-			To:   "0 11 * * 1", // Monday 11 AM
+			From: cronMonday10AM, // Monday 10 AM
+			To:   cronMonday11AM, // Monday 11 AM
 		}
 		loc, err := time.LoadLocation("Europe/Rome")
 		Expect(err).To(BeNil())

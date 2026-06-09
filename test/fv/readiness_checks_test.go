@@ -42,15 +42,15 @@ var _ = Describe("ReadinessCheck", func() {
 			},
 			Spec: libsveltosv1beta1.SveltosClusterSpec{
 				// fv-test creates a SveltosCluster. Here we simply reuse the Secret with Kubeconfig
-				KubeconfigName: "clusterapi-workload-sveltos-kubeconfig",
+				KubeconfigName: kubeconfigName,
 				ReadinessChecks: []libsveltosv1beta1.ClusterCheck{
 					{
-						Name: "failing-check",
+						Name: failingCheck,
 						ResourceSelectors: []libsveltosv1beta1.ResourceSelector{
 							{
-								Kind:    "Namespace",
+								Kind:    kindNamespace,
 								Group:   "",
-								Version: "v1",
+								Version: apiVersionV1,
 								Name:    namespace,
 							},
 						},
