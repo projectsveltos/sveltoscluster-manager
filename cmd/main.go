@@ -34,8 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	libsveltosv1beta1 "github.com/projectsveltos/libsveltos/api/v1beta1"
-	"github.com/projectsveltos/libsveltos/lib/logsettings"
-
+	logs "github.com/projectsveltos/libsveltos/lib/logsettings"
 	"github.com/projectsveltos/sveltoscluster-manager/controllers"
 	//+kubebuilder:scaffold:imports
 )
@@ -79,9 +78,16 @@ func main() {
 	// Setup the context that's going to be used in controllers and for the manager.
 	ctx := ctrl.SetupSignalHandler()
 
-	logsettings.RegisterForLogSettings(ctx,
+	logs.RegisterForLogSettings(ctx,
 		libsveltosv1beta1.ComponentSveltosClusterManager, ctrl.Log.WithName("log-setter"),
 		ctrl.GetConfigOrDie())
+
+	sveltosNamespace := os.Getenv("NAMESPACE")
+	if sveltosNamespace == "" {
+		setupLog.V(logs.LogInfo).Error(nil, "Missing required environment variables NAMESPACE")
+		os.Exit(1)
+	}
+	controllers.SetSveltosNamespace(sveltosNamespace)
 
 	ctrlOptions := ctrl.Options{
 		Scheme:                 scheme,
@@ -117,8 +123,9 @@ func main() {
 		os.Exit(1)
 	}
 	if err = (&controllers.SveltosLicenseReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:           mgr.GetClient(),
+		Scheme:           mgr.GetScheme(),
+		SveltosNamespace: sveltosNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "SveltosLicense")
 		os.Exit(1)

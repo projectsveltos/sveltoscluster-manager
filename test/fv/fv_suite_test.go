@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -53,14 +54,27 @@ var (
 	k8sClient           client.Client
 	scheme              *runtime.Scheme
 	kindWorkloadCluster *clusterv1.Cluster
+	sveltosNamespace    string
 )
 
 const (
 	timeout         = 2 * time.Minute
 	pollingInterval = 5 * time.Second
 	//nolint: gosec // this is not a secret. It is the postfix of the Kubernetes secret with kubeconfig
-	secretPostfix = "-sveltos-kubeconfig"
+	secretPostfix           = "-sveltos-kubeconfig"
+	apiVersionV1            = "v1"
+	kubeconfigName          = "clusterapi-workload-sveltos-kubeconfig"
+	failingCheck            = "failing-check"
+	kindNamespace           = "Namespace"
+	defaultSveltosNamespace = "projectsveltos"
 )
+
+func init() {
+	sveltosNamespace = os.Getenv("SVELTOS_NAMESPACE")
+	if sveltosNamespace == "" {
+		sveltosNamespace = defaultSveltosNamespace
+	}
+}
 
 func TestFv(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -138,7 +152,7 @@ func generateKubeconfigWithTokenRequest(remoteRestConfig *rest.Config) string {
 	workloadClient, err := getKindWorkloadClusterClient()
 	Expect(err).To(BeNil())
 
-	projectsveltos := "projectsveltos"
+	projectsveltos := sveltosNamespace
 	By(fmt.Sprintf("Creating namespace %s", projectsveltos))
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
@@ -307,7 +321,7 @@ func createSveltosCluster(sveltosClusterNamespace, sveltosClusterName string) {
 						{
 							Kind:    "Node",
 							Group:   "",
-							Version: "v1",
+							Version: apiVersionV1,
 						},
 					},
 					Condition: `function evaluate()

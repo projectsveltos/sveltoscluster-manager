@@ -40,7 +40,8 @@ import (
 // SveltosLicenseReconciler reconciles a SveltosLicense object
 type SveltosLicenseReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme           *runtime.Scheme
+	SveltosNamespace string
 }
 
 // +kubebuilder:rbac:groups=lib.projectsveltos.io,resources=sveltoslicenses,verbs=get;list;watch
@@ -108,7 +109,8 @@ func (r *SveltosLicenseReconciler) validateSveltosLicense(ctx context.Context,
 		return sveltosLicense, nil
 	}
 
-	result := license.VerifyLicenseSecret(ctx, r.Client, publicKey, logger)
+	result := license.VerifyLicenseSecret(ctx, r.Client, r.SveltosNamespace,
+		publicKey, logger)
 
 	if result.Payload == nil {
 		logger.V(logs.LogInfo).Info("failed to get payload")
