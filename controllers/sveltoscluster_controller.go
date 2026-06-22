@@ -139,6 +139,7 @@ func (r *SveltosClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// Handle deleted clusterProfile
 	if !sveltosCluster.DeletionTimestamp.IsZero() {
+		clusterproxy.EvictWorkloadIdentityCache(sveltosCluster.Namespace, sveltosCluster.Name)
 		return reconcile.Result{}, nil
 	}
 
