@@ -32,13 +32,10 @@ import (
 	"github.com/robfig/cron/v3"
 	"go.yaml.in/yaml/v2"
 	authenticationv1 "k8s.io/api/authentication/v1"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
-	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	apiv1 "k8s.io/client-go/tools/clientcmd/api/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -164,15 +161,6 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 		return
 	}
 
-	s := runtime.NewScheme()
-	if err := clientgoscheme.AddToScheme(s); err != nil {
-		errorMessage := err.Error()
-		logger.V(logs.LogInfo).Error(err, "failed to get scheme")
-		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
-		updateConnectionStatus(sveltosClusterScope, logger)
-		return
-	}
-
 	// Get managed cluster rest.Config
 	config, err := clusterproxy.GetSveltosKubernetesRestConfig(ctx, logger, r.Client,
 		sveltosClusterScope.SveltosCluster.Namespace, sveltosClusterScope.SveltosCluster.Name)
@@ -184,25 +172,13 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 		return
 	}
 
-	// Get managed cluster client
-	var c client.Client
-	c, err = client.New(config, client.Options{Scheme: s})
-	if err != nil {
-		errorMessage := err.Error()
-		logger.V(logs.LogInfo).Error(err, "failed to get client")
-		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
-		updateConnectionStatus(sveltosClusterScope, logger)
-		return
-	}
-
-	logger.V(logs.LogDebug).Info("got client")
 	sveltosClusterScope.SveltosCluster.Status.FailureMessage = nil
 
-	ns := &corev1.Namespace{}
-	err = c.Get(context.TODO(), types.NamespacedName{Name: "kube-system"}, ns)
-	if err != nil && !apierrors.IsNotFound(err) {
+	// Use ServerVersion (/version endpoint, no RBAC required) as the connectivity probe.
+	currentVersion, err := k8s_utils.GetKubernetesVersion(ctx, config, logger)
+	if err != nil {
 		errorMessage := err.Error()
-		logger.V(logs.LogInfo).Error(err, "failed to get kube-system namespace")
+		logger.V(logs.LogInfo).Error(err, "failed to get cluster kubernetes version")
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 	} else {
 		// Always renew token if needed
@@ -220,25 +196,18 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 			sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
 		} else {
 			sveltosClusterScope.SveltosCluster.Status.Ready = true
-			currentVersion, err := k8s_utils.GetKubernetesVersion(ctx, config, logger)
+			currentSemVersion, err := semver.NewVersion(currentVersion)
 			if err != nil {
-				logger.V(logs.LogInfo).Error(err, "failed to get cluster kubernetes version")
-				errorMessage := err.Error()
-				sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
+				logger.Error(err, "failed to get semver for current version %s", currentVersion)
 			} else {
-				currentSemVersion, err := semver.NewVersion(currentVersion)
-				if err != nil {
-					logger.Error(err, "failed to get semver for current version %s", currentVersion)
-				} else {
-					kubernetesVersion := fmt.Sprintf("v%d.%d.%d", currentSemVersion.Major(), currentSemVersion.Minor(), currentSemVersion.Patch())
-					sveltosClusterScope.SetLabel(versionLabel,
-						kubernetesVersion)
-					updateKubernetesVersionMetric(string(libsveltosv1beta1.ClusterTypeSveltos), sveltosClusterScope.SveltosCluster.Namespace,
-						sveltosClusterScope.SveltosCluster.Name, kubernetesVersion, logger)
-				}
-				sveltosClusterScope.SveltosCluster.Status.Version = currentVersion
-				logger.V(logs.LogDebug).Info(fmt.Sprintf("cluster version %s", currentVersion))
+				kubernetesVersion := fmt.Sprintf("v%d.%d.%d", currentSemVersion.Major(), currentSemVersion.Minor(), currentSemVersion.Patch())
+				sveltosClusterScope.SetLabel(versionLabel,
+					kubernetesVersion)
+				updateKubernetesVersionMetric(string(libsveltosv1beta1.ClusterTypeSveltos), sveltosClusterScope.SveltosCluster.Namespace,
+					sveltosClusterScope.SveltosCluster.Name, kubernetesVersion, logger)
 			}
+			sveltosClusterScope.SveltosCluster.Status.Version = currentVersion
+			logger.V(logs.LogDebug).Info(fmt.Sprintf("cluster version %s", currentVersion))
 		}
 	}
 
