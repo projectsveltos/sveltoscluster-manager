@@ -87,7 +87,6 @@ func main() {
 		setupLog.V(logs.LogInfo).Error(nil, "Missing required environment variables NAMESPACE")
 		os.Exit(1)
 	}
-	controllers.SetSveltosNamespace(sveltosNamespace)
 
 	ctrlOptions := ctrl.Options{
 		Scheme:                 scheme,
