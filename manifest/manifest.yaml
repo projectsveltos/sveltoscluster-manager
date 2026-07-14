@@ -67,6 +67,34 @@ rules:
   - update
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sc-metrics-reader
+rules:
+- nonResourceURLs:
+  - /metrics
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sc-proxy-role
+rules:
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: sc-manager-rolebinding
@@ -74,6 +102,19 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: sc-manager-role
+subjects:
+- kind: ServiceAccount
+  name: sc-manager
+  namespace: projectsveltos
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sc-proxy-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sc-proxy-role
 subjects:
 - kind: ServiceAccount
   name: sc-manager
@@ -95,6 +136,22 @@ spec:
   selector:
     control-plane: sc-manager
   type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    control-plane: sc-manager
+  name: sc-manager-metrics-service
+  namespace: projectsveltos
+spec:
+  ports:
+  - name: https
+    port: 8443
+    protocol: TCP
+    targetPort: https
+  selector:
+    control-plane: sc-manager
 ---
 apiVersion: apps/v1
 kind: Deployment

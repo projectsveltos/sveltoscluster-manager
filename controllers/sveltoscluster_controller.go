@@ -137,6 +137,7 @@ func (r *SveltosClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// Handle deleted clusterProfile
 	if !sveltosCluster.DeletionTimestamp.IsZero() {
 		clusterproxy.EvictWorkloadIdentityCache(sveltosCluster.Namespace, sveltosCluster.Name)
+		deleteClusterMetrics(string(libsveltosv1beta1.ClusterTypeSveltos), sveltosCluster.Namespace, sveltosCluster.Name, logger)
 		return reconcile.Result{}, nil
 	}
 
@@ -214,6 +215,8 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 	updateConnectionStatus(sveltosClusterScope, logger)
 	updateClusterConnectionStatusMetric(string(libsveltosv1beta1.ClusterTypeSveltos), sveltosClusterScope.SveltosCluster.Namespace,
 		sveltosClusterScope.SveltosCluster.Name, sveltosClusterScope.SveltosCluster.Status.ConnectionStatus, logger)
+	updateConnectionFailuresMetric(string(libsveltosv1beta1.ClusterTypeSveltos), sveltosClusterScope.SveltosCluster.Namespace,
+		sveltosClusterScope.SveltosCluster.Name, sveltosClusterScope.SveltosCluster.Status.ConnectionFailures, logger)
 }
 
 func updateConnectionStatus(sveltosClusterScope *scope.SveltosClusterScope, logger logr.Logger) {
@@ -698,10 +701,16 @@ func (r *SveltosClusterReconciler) reconcilePullModeCluster(
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &msg
 	}
 
+	updateAgentLastHeartbeatMetric(string(libsveltosv1beta1.ClusterTypeSveltos),
+		cluster.Namespace, cluster.Name, cluster.Status.AgentLastReportTime.Time, logger)
+
 	updateConnectionStatus(sveltosClusterScope, logger)
 	updateClusterConnectionStatusMetric(string(libsveltosv1beta1.ClusterTypeSveltos),
 		sveltosClusterScope.SveltosCluster.Namespace, sveltosClusterScope.SveltosCluster.Name,
 		sveltosClusterScope.SveltosCluster.Status.ConnectionStatus, logger)
+	updateConnectionFailuresMetric(string(libsveltosv1beta1.ClusterTypeSveltos),
+		sveltosClusterScope.SveltosCluster.Namespace, sveltosClusterScope.SveltosCluster.Name,
+		sveltosClusterScope.SveltosCluster.Status.ConnectionFailures, logger)
 }
 
 // serviceAccountInfo holds the parsed ServiceAccount details
