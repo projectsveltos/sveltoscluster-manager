@@ -46,6 +46,7 @@ import (
 	libsveltosv1beta1 "github.com/projectsveltos/libsveltos/api/v1beta1"
 	"github.com/projectsveltos/libsveltos/lib/clusterproxy"
 	"github.com/projectsveltos/libsveltos/lib/k8s_utils"
+	license "github.com/projectsveltos/libsveltos/lib/licenses"
 	logs "github.com/projectsveltos/libsveltos/lib/logsettings"
 	"github.com/projectsveltos/libsveltos/lib/pullmode"
 	"github.com/projectsveltos/libsveltos/lib/sharding"
@@ -67,6 +68,7 @@ type SveltosClusterReconciler struct {
 	Scheme               *runtime.Scheme
 	ConcurrentReconciles int
 	ShardKey             string // when set, only clusters matching the ShardKey will be reconciled
+	SveltosNamespace     string // namespace holding the sveltos-license Secret
 }
 
 type matchStatus struct {
@@ -158,7 +160,7 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 	defer handleAutomaticPauseUnPause(sveltosClusterScope.SveltosCluster, time.Now(), logger)
 
 	if sveltosClusterScope.SveltosCluster.Spec.PullMode {
-		r.reconcilePullModeCluster(sveltosClusterScope, logger)
+		r.reconcilePullModeCluster(ctx, sveltosClusterScope, logger)
 		return
 	}
 
@@ -679,10 +681,16 @@ func (r *SveltosClusterReconciler) runChecks(ctx context.Context, remotConfig *r
 }
 
 func (r *SveltosClusterReconciler) reconcilePullModeCluster(
-	sveltosClusterScope *scope.SveltosClusterScope, logger logr.Logger,
+	ctx context.Context, sveltosClusterScope *scope.SveltosClusterScope, logger logr.Logger,
 ) {
 
 	cluster := sveltosClusterScope.SveltosCluster
+
+	// Relay the license so sveltos-applier (which cannot reach the sveltos-license Secret
+	// directly) can independently verify it. Runs regardless of agent connectivity, so a
+	// license change is visible even while the agent is unreachable.
+	r.updateLicenseAnnotations(ctx, cluster, logger)
+
 	if !cluster.Status.Ready {
 		return
 	}
@@ -711,6 +719,65 @@ func (r *SveltosClusterReconciler) reconcilePullModeCluster(
 	updateConnectionFailuresMetric(string(libsveltosv1beta1.ClusterTypeSveltos),
 		sveltosClusterScope.SveltosCluster.Namespace, sveltosClusterScope.SveltosCluster.Name,
 		sveltosClusterScope.SveltosCluster.Status.ConnectionFailures, logger)
+}
+
+// updateLicenseAnnotations relays the sveltos-license Secret's payload/signature bytes
+// (base64-encoded) onto the SveltosCluster, since sveltos-applier cannot reach that Secret
+// directly (it lives in a different namespace than sveltos-applier's constrained RBAC
+// covers). sveltos-applier independently re-verifies the signature itself; this only
+// transports the bytes, it does not assert validity.
+//
+// The annotations are set whenever the signature verifies, even if the license itself is
+// expired, so sveltos-applier can distinguish "a license is present but expired" from
+// "no license at all". They are cleared when no signed payload could be extracted (missing
+// Secret, missing keys, or a signature that doesn't verify).
+//
+// This runs every minute (the pull-mode reconcile cadence), but the license itself changes
+// rarely. cluster.Annotations is only mutated when the value actually differs from what's
+// already there, so an unchanged license produces no diff for the scope's patch helper to
+// persist, and no SveltosCluster watch event fires — other components (e.g. addon-controller)
+// watch SveltosCluster to trigger their own reconciliation, and shouldn't be woken up every
+// minute for a no-op.
+func (r *SveltosClusterReconciler) updateLicenseAnnotations(ctx context.Context,
+	cluster *libsveltosv1beta1.SveltosCluster, logger logr.Logger) {
+
+	publicKey, err := license.GetPublicKey()
+	if err != nil {
+		logger.V(logs.LogInfo).Info(fmt.Sprintf("failed to get license public key: %v", err))
+		return
+	}
+
+	result := license.VerifyLicenseSecret(ctx, r.Client, r.SveltosNamespace, publicKey, logger)
+
+	if result.PayloadData == nil {
+		if cluster.Annotations == nil {
+			return
+		}
+		_, hasPayload := cluster.Annotations[license.LicensePayloadAnnotation]
+		_, hasSignature := cluster.Annotations[license.LicenseSignatureAnnotation]
+		if !hasPayload && !hasSignature {
+			return
+		}
+		delete(cluster.Annotations, license.LicensePayloadAnnotation)
+		delete(cluster.Annotations, license.LicenseSignatureAnnotation)
+		return
+	}
+
+	payloadAnnotation := base64.StdEncoding.EncodeToString(result.PayloadData)
+	signatureAnnotation := base64.StdEncoding.EncodeToString(result.SignatureData)
+
+	if cluster.Annotations != nil &&
+		cluster.Annotations[license.LicensePayloadAnnotation] == payloadAnnotation &&
+		cluster.Annotations[license.LicenseSignatureAnnotation] == signatureAnnotation {
+
+		return
+	}
+
+	if cluster.Annotations == nil {
+		cluster.Annotations = map[string]string{}
+	}
+	cluster.Annotations[license.LicensePayloadAnnotation] = payloadAnnotation
+	cluster.Annotations[license.LicenseSignatureAnnotation] = signatureAnnotation
 }
 
 // serviceAccountInfo holds the parsed ServiceAccount details
