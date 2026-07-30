@@ -117,6 +117,7 @@ func main() {
 		Scheme:               mgr.GetScheme(),
 		ConcurrentReconciles: concurrentReconciles,
 		ShardKey:             shardKey,
+		SveltosNamespace:     sveltosNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "SveltosCluster")
 		os.Exit(1)

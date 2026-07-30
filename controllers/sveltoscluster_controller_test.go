@@ -485,7 +485,7 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 		})
 		Expect(err).To(BeNil())
 
-		controllers.ReconcilePullModeCluster(reconciler, sveltosClusterScope, logger)
+		controllers.ReconcilePullModeCluster(reconciler, context.TODO(), sveltosClusterScope, logger)
 
 		Expect(currentSveltosCluster.Status.FailureMessage).To(BeNil())
 		Expect(currentSveltosCluster.Status.ConnectionStatus).To(Equal(libsveltosv1beta1.ConnectionHealthy))
@@ -509,7 +509,7 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 			return age > 5*time.Minute
 		}, timeout, pollingInterval).Should(BeTrue())
 
-		controllers.ReconcilePullModeCluster(reconciler, sveltosClusterScope, logger)
+		controllers.ReconcilePullModeCluster(reconciler, context.TODO(), sveltosClusterScope, logger)
 
 		Expect(currentSveltosCluster.Status.FailureMessage).ToNot(BeNil())
 	})
