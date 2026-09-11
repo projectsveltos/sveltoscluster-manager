@@ -122,7 +122,7 @@ func (r *SveltosClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	var isMatch bool
 	isMatch, err = r.isClusterAShardMatch(ctx, sveltosCluster, logger)
 	if err != nil {
-		return reconcile.Result{Requeue: true, RequeueAfter: normalRequeueAfter}, nil
+		return reconcile.Result{RequeueAfter: normalRequeueAfter}, nil
 	} else if !isMatch {
 		// This sveltoscluster pod is not a shard match.
 		return reconcile.Result{}, nil
@@ -146,7 +146,7 @@ func (r *SveltosClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// Handle non-deleted clusterProfile
 	r.reconcileNormal(ctx, sveltosClusterScope)
 	// Periodically reconcile. We need to keep evaluating connectivity
-	return reconcile.Result{Requeue: true, RequeueAfter: time.Minute}, nil
+	return reconcile.Result{RequeueAfter: time.Minute}, nil
 }
 
 func (r *SveltosClusterReconciler) reconcileNormal(
