@@ -78,17 +78,17 @@ func (r *SveltosLicenseReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	err := r.Status().Update(ctx, sveltosLicense)
 	if err != nil {
 		logger.V(logs.LogDebug).Error(err, "failed to update SveltosLicense Status")
-		return reconcile.Result{Requeue: true, RequeueAfter: normalRequeueAfter}, nil
+		return reconcile.Result{RequeueAfter: normalRequeueAfter}, nil
 	}
 
 	if payload != nil {
 		timeUntilExpiration := time.Until(payload.ExpirationDate)
 		if timeUntilExpiration > 0 {
-			return reconcile.Result{Requeue: true, RequeueAfter: timeUntilExpiration}, nil
+			return reconcile.Result{RequeueAfter: timeUntilExpiration}, nil
 		}
 	}
 
-	return reconcile.Result{Requeue: true, RequeueAfter: time.Minute}, nil
+	return reconcile.Result{RequeueAfter: time.Minute}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
