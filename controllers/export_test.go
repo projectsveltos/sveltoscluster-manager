@@ -17,12 +17,26 @@ limitations under the License.
 package controllers
 
 var (
-	ShouldRenewTokenRequest         = (*SveltosClusterReconciler).shouldRenewTokenRequest
-	GetTokenExpiration              = (*SveltosClusterReconciler).getTokenExpiration
-	AdjustTokenRequestRenewalOption = (*SveltosClusterReconciler).adjustTokenRequestRenewalOption
-	GetServiceAccountTokenRequest   = (*SveltosClusterReconciler).getServiceAccountTokenRequest
-	ReconcilePullModeCluster        = (*SveltosClusterReconciler).reconcilePullModeCluster
-	UpdateLicenseAnnotations        = (*SveltosClusterReconciler).updateLicenseAnnotations
+	ShouldRenewTokenRequest                            = (*SveltosClusterReconciler).shouldRenewTokenRequest
+	GetTokenExpiration                                 = (*SveltosClusterReconciler).getTokenExpiration
+	AdjustTokenRequestRenewalOption                    = (*SveltosClusterReconciler).adjustTokenRequestRenewalOption
+	GetServiceAccountTokenRequest                      = (*SveltosClusterReconciler).getServiceAccountTokenRequest
+	ReconcilePullModeCluster                           = (*SveltosClusterReconciler).reconcilePullModeCluster
+	UpdateLicenseAnnotations                           = (*SveltosClusterReconciler).updateLicenseAnnotations
+	HandlePullModeTokenRequestRenewal                  = (*SveltosClusterReconciler).handlePullModeTokenRequestRenewal
+	GetPullModeManagementClusterEndpoint               = (*SveltosClusterReconciler).getPullModeManagementClusterEndpoint
+	TerminatePullModeTokenRenewalTrackingIfProvisioned = (*SveltosClusterReconciler).terminatePullModeTokenRenewalTrackingIfProvisioned
+)
+
+var (
+	GetPullModeKubeconfigSecret = getPullModeKubeconfigSecret
+)
+
+const (
+	PullModeKubeconfigSecretNamePostfix      = pullModeKubeconfigSecretNamePostfix
+	PullModeKubeconfigSecretKey              = pullModeKubeconfigSecretKey
+	PullModeManagementClusterURLConfigMapKey = pullModeManagementClusterURLConfigMapKey
+	PullModeManagementClusterCAConfigMapKey  = pullModeManagementClusterCAConfigMapKey
 )
 
 var (

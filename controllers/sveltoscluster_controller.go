@@ -32,8 +32,10 @@ import (
 	"github.com/robfig/cron/v3"
 	"go.yaml.in/yaml/v3"
 	authenticationv1 "k8s.io/api/authentication/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -59,6 +61,30 @@ const (
 	normalRequeueAfter = 10 * time.Second
 
 	versionLabel = "projectsveltos.io/k8s-version"
+
+	// Delivery mechanism for a renewed pull-mode kubeconfig (see handlePullModeTokenRequestRenewal):
+	// a Secret staged via pullmode.StageResourcesForDeployment, matching exactly what sveltosctl's
+	// "register cluster --pullmode --token" applies to the managed cluster at registration time.
+	// Its namespace is r.SveltosNamespace (this reconciler's own namespace, read from the NAMESPACE
+	// env var), not a hardcoded literal: by convention every Sveltos component, on both the
+	// management and the managed cluster, is deployed into the same namespace name (see
+	// classifier's getSveltosNamespace/deploySveltosApplierResources for the same pattern), which
+	// need not be "projectsveltos".
+	//nolint: gosec // not a credential, just a Secret name suffix
+	pullModeKubeconfigSecretNamePostfix = "-sveltos-kubeconfig"
+	pullModeKubeconfigSecretKey         = "kubeconfig"
+	pullModeKubeconfigResourceKey       = "kubeconfig-secret"
+
+	// pullModeManagementClusterURLConfigMapKey and pullModeManagementClusterCAConfigMapKey are
+	// the keys, in the ConfigMap sveltosctl creates at registration time (named after the
+	// SveltosCluster, in its namespace), holding the management cluster's externally reachable
+	// API server address and the CA data that validates it. See
+	// getPullModeManagementClusterEndpoint. The CA is not necessarily the same as
+	// sveltoscluster-manager's own in-cluster one: on some providers (observed on Civo) the
+	// externally reachable endpoint is fronted by a load balancer presenting a certificate from
+	// a different CA than the in-cluster one.
+	pullModeManagementClusterURLConfigMapKey = "server"
+	pullModeManagementClusterCAConfigMapKey  = "ca.crt"
 )
 
 // SveltosClusterReconciler reconciles a SveltosCluster object
@@ -84,7 +110,12 @@ type checkStatus struct {
 //+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=sveltosclusters,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=sveltosclusters/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;update
+//+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 //+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=debuggingconfigurations,verbs=get;list;watch
+//+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=configurationgroups,verbs=get;list;watch;create;delete;update;patch
+//+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=configurationgroups/status,verbs=get;list;watch
+//+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=configurationbundles,verbs=get;list;watch;create;delete;update;patch
+//+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=configurationbundles/status,verbs=get;list;watch;update
 
 func (r *SveltosClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
 	logger := ctrl.LoggerFrom(ctx)
@@ -652,16 +683,26 @@ func (r *SveltosClusterReconciler) adjustTokenRequestRenewalOption(
 
 	logger.V(logs.LogDebug).Info(fmt.Sprintf("token expires at: %v\n", expirationTime))
 
-	saExpirationInSecond := tokenRequestRenewalOption.RenewTokenRequestInterval.Seconds()
-	expectedExpiration := time.Now().Add(time.Duration(saExpirationInSecond) * time.Second)
+	// Compare the token's actual remaining lifetime (as of now) against what we actually asked
+	// it to be valid for (TokenDuration, or RenewTokenRequestInterval if TokenDuration wasn't
+	// set), not the renewal cadence itself: TokenDuration is deliberately meant to exceed
+	// RenewTokenRequestInterval, as a buffer, so comparing against the interval directly would
+	// treat that buffer as an unexpected shortfall.
+	//
+	// actualLifetime and requestedDuration must both be measured relative to the same instant
+	// (now), not by re-adding time.Now() to requestedDuration and comparing that against
+	// expirationTime (which was fixed earlier, at token-issuance time): any processing delay
+	// between issuing the TokenRequest and this check would then make even a fully honored
+	// request look shorter than expected. tolerance absorbs the (normally small) remainder of
+	// that gap.
+	requestedDuration := time.Duration(r.getEffectiveTokenDurationInSecond(tokenRequestRenewalOption)) * time.Second
+	actualLifetime := time.Until(expirationTime)
 
-	if expirationTime.Before(expectedExpiration) {
-		diff := expectedExpiration.Sub(expirationTime)
+	const tolerance = 5 * time.Second
+	if actualLifetime < requestedDuration-tolerance {
 		logger.V(logs.LogInfo).Info(
-			fmt.Sprintf("Token expiration is shorter than expected by %v. Requested: %v, Actual: %v",
-				diff, expectedExpiration, expirationTime))
-
-		actualLifetime := time.Until(expirationTime)
+			fmt.Sprintf("Token expiration is shorter than expected. Requested: %v, Actual: %v",
+				requestedDuration, actualLifetime))
 		return metav1.Duration{Duration: actualLifetime}
 	}
 
@@ -686,10 +727,29 @@ func (r *SveltosClusterReconciler) reconcilePullModeCluster(
 
 	cluster := sveltosClusterScope.SveltosCluster
 
+	// Cleared here and re-set below only if something currently fails, so a resolved issue
+	// (renewal or heartbeat) does not stick around past the reconcile that fixed it. Mirrors
+	// the equivalent clear in reconcileNormal's push-mode path.
+	cluster.Status.FailureMessage = nil
+
 	// Relay the license so sveltos-applier (which cannot reach the sveltos-license Secret
 	// directly) can independently verify it. Runs regardless of agent connectivity, so a
 	// license change is visible even while the agent is unreachable.
 	r.updateLicenseAnnotations(ctx, cluster, logger)
+
+	// Always renew token if needed. The ServiceAccount lives in this (the management) cluster,
+	// so no remote reachability is required, unlike the push-mode equivalent.
+	if r.shouldRenewTokenRequest(sveltosClusterScope, logger) {
+		if err := r.handlePullModeTokenRequestRenewal(ctx, sveltosClusterScope, logger); err != nil {
+			errorMessage := err.Error()
+			cluster.Status.FailureMessage = &errorMessage
+		}
+	}
+
+	// Once sveltos-applier confirms it applied the renewed kubeconfig, remove the
+	// ConfigurationGroup/ConfigurationBundle that carried it so the plaintext token does not
+	// linger as a readable object longer than necessary.
+	r.terminatePullModeTokenRenewalTrackingIfProvisioned(ctx, cluster, logger)
 
 	if !cluster.Status.Ready {
 		return
@@ -719,6 +779,175 @@ func (r *SveltosClusterReconciler) reconcilePullModeCluster(
 	updateConnectionFailuresMetric(string(libsveltosv1beta1.ClusterTypeSveltos),
 		sveltosClusterScope.SveltosCluster.Namespace, sveltosClusterScope.SveltosCluster.Name,
 		sveltosClusterScope.SveltosCluster.Status.ConnectionFailures, logger)
+}
+
+// getPullModeManagementClusterEndpoint reads the ConfigMap sveltosctl creates, at registration
+// time, at the same name/namespace as the SveltosCluster's own ServiceAccount, holding the
+// management cluster's externally reachable API server address (--management-cluster-url) and
+// the CA data that validates it. r.Config's Host and CAData are not used here: they are this
+// reconciler's own in-cluster view, which is typically an internal address the managed cluster
+// cannot reach, and is not guaranteed to share a CA with the external endpoint either.
+func (r *SveltosClusterReconciler) getPullModeManagementClusterEndpoint(ctx context.Context,
+	namespace, name string) (server string, caData []byte, err error) {
+
+	configMap := &corev1.ConfigMap{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, configMap); err != nil {
+		return "", nil, err
+	}
+
+	server, ok := configMap.Data[pullModeManagementClusterURLConfigMapKey]
+	if !ok || server == "" {
+		return "", nil, fmt.Errorf("configmap %s/%s does not contain a %q key", namespace, name,
+			pullModeManagementClusterURLConfigMapKey)
+	}
+
+	ca, ok := configMap.Data[pullModeManagementClusterCAConfigMapKey]
+	if !ok || ca == "" {
+		return "", nil, fmt.Errorf("configmap %s/%s does not contain a %q key", namespace, name,
+			pullModeManagementClusterCAConfigMapKey)
+	}
+
+	return server, []byte(ca), nil
+}
+
+// handlePullModeTokenRequestRenewal renews the token for a pull-mode SveltosCluster's
+// ServiceAccount. Unlike the push-mode equivalent (handleTokenRequestRenewal), the
+// ServiceAccount lives in this (the management) cluster rather than the managed cluster, so
+// the TokenRequest is issued against r.Config (this reconciler's own, local rest.Config)
+// instead of a remote one. The renewed kubeconfig cannot be written directly to a Secret in
+// the managed cluster (pull mode clusters are not reachable from the management cluster); it
+// is instead delivered through the pull-mode ConfigurationGroup/ConfigurationBundle transport,
+// the same mechanism used to deliver every other pull-mode resource, for sveltos-applier to
+// pick up and apply locally.
+func (r *SveltosClusterReconciler) handlePullModeTokenRequestRenewal(ctx context.Context,
+	sveltosClusterScope *scope.SveltosClusterScope, logger logr.Logger) error {
+
+	sveltosCluster := sveltosClusterScope.SveltosCluster
+	opt := sveltosCluster.Spec.TokenRequestRenewalOption
+	if opt == nil || opt.SAName == "" || opt.SANamespace == "" {
+		// Nothing to renew. sveltosctl always sets SAName/SANamespace for pull-mode clusters
+		// registered with --token, so this only happens if TokenRequestRenewalOption was set
+		// (or misconfigured) some other way.
+		return nil
+	}
+
+	saExpirationInSecond := r.getEffectiveTokenDurationInSecond(opt)
+
+	// r.Config is this reconciler's own, local rest.Config: correct for actually reaching this
+	// (the management) cluster's apiserver to issue the TokenRequest below, but its Host is
+	// typically a cluster-internal address (e.g. the kubernetes.default.svc ClusterIP) that the
+	// managed cluster cannot reach, and its CAData is not guaranteed to validate the externally
+	// reachable endpoint either (observed on Civo: the external load balancer presents a
+	// certificate from a different CA than the in-cluster one). The kubeconfig embedded for
+	// sveltos-applier must instead use the address and CA captured at registration time
+	// (sveltosctl's --management-cluster-url, validated by its own ambient config.CAData), so
+	// read those back here rather than reusing r.Config.Host/CAData.
+	managementClusterURL, managementClusterCA, err := r.getPullModeManagementClusterEndpoint(ctx, opt.SANamespace, opt.SAName)
+	if err != nil {
+		logger.V(logs.LogInfo).Error(err, "failed to get management cluster endpoint for pull mode cluster")
+		return err
+	}
+
+	tokenRequest, err := r.getServiceAccountTokenRequest(ctx, &r.Config, opt.SANamespace, opt.SAName,
+		saExpirationInSecond, logger)
+	if err != nil {
+		logger.V(logs.LogInfo).Error(err, "failed to get tokenRequest for pull mode cluster")
+		return err
+	}
+
+	opt.RenewTokenRequestInterval = r.adjustTokenRequestRenewalOption(opt, tokenRequest, logger)
+
+	kubeconfigServerConfig := r.Config
+	kubeconfigServerConfig.Host = managementClusterURL
+	kubeconfigServerConfig.CAData = managementClusterCA
+	kubeconfigData := r.getKubeconfigFromToken(opt.SANamespace, opt.SAName, tokenRequest.Token, &kubeconfigServerConfig)
+
+	uSecret, err := runtime.DefaultUnstructuredConverter.ToUnstructured(
+		getPullModeKubeconfigSecret(r.SveltosNamespace, sveltosCluster.Name, kubeconfigData))
+	if err != nil {
+		return err
+	}
+
+	resources := map[string][]unstructured.Unstructured{
+		pullModeKubeconfigResourceKey: {{Object: uSecret}},
+	}
+
+	err = pullmode.StageResourcesForDeployment(ctx, r.Client, sveltosCluster.Namespace, sveltosCluster.Name,
+		libsveltosv1beta1.SveltosClusterKind, sveltosCluster.Name, libsveltosv1beta1.FeatureTokenRenewal,
+		resources, true, logger)
+	if err != nil {
+		logger.V(logs.LogInfo).Error(err, "failed to stage renewed kubeconfig for pull mode cluster")
+		return err
+	}
+
+	// sveltos-applier's deployResourcesInConfigurationBundle dereferences SourceRef whenever the
+	// ConfigurationBundle doesn't set ReferencedObjectKind (which ours never does, since it isn't
+	// about a ClusterProfile/Profile-managed resource), so this must be set, matching what every
+	// other requestor (classifier, addon-controller) already does.
+	sourceRef := corev1.ObjectReference{
+		APIVersion: libsveltosv1beta1.GroupVersion.String(),
+		Kind:       libsveltosv1beta1.SveltosClusterKind,
+		Namespace:  sveltosCluster.Namespace,
+		Name:       sveltosCluster.Name,
+		UID:        sveltosCluster.UID,
+	}
+
+	err = pullmode.CommitStagedResourcesForDeployment(ctx, r.Client, sveltosCluster.Namespace, sveltosCluster.Name,
+		libsveltosv1beta1.SveltosClusterKind, sveltosCluster.Name, libsveltosv1beta1.FeatureTokenRenewal, logger,
+		pullmode.WithSourceRef(&sourceRef))
+	if err != nil {
+		logger.V(logs.LogInfo).Error(err, "failed to commit renewed kubeconfig for pull mode cluster")
+		return err
+	}
+
+	sveltosCluster.Status.LastReconciledTokenRequestAt = time.Now().Format(time.RFC3339)
+	return nil
+}
+
+// getPullModeKubeconfigSecret builds the Secret sveltos-applier expects to find with its
+// kubeconfig to reach the management cluster, matching exactly what sveltosctl's
+// "register cluster --pullmode --token" applies to the managed cluster at registration time.
+// sveltosNamespace is this reconciler's own namespace (r.SveltosNamespace): by convention every
+// Sveltos component is deployed into the same namespace name on both the management and the
+// managed cluster, so this is also where sveltos-applier's kubeconfig Secret lives there.
+func getPullModeKubeconfigSecret(sveltosNamespace, clusterName, kubeconfigData string) *corev1.Secret {
+	return &corev1.Secret{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Secret",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: sveltosNamespace,
+			Name:      clusterName + pullModeKubeconfigSecretNamePostfix,
+		},
+		Data: map[string][]byte{
+			pullModeKubeconfigSecretKey: []byte(kubeconfigData),
+		},
+	}
+}
+
+// terminatePullModeTokenRenewalTrackingIfProvisioned deletes the ConfigurationGroup/
+// ConfigurationBundle that carried a renewed kubeconfig once sveltos-applier confirms it
+// applied it. This is a no-op (cheap Get, not found) on every reconcile where there is
+// nothing pending, which is the common case between renewals.
+func (r *SveltosClusterReconciler) terminatePullModeTokenRenewalTrackingIfProvisioned(ctx context.Context,
+	sveltosCluster *libsveltosv1beta1.SveltosCluster, logger logr.Logger) {
+
+	status, err := pullmode.GetDeploymentStatus(ctx, r.Client, sveltosCluster.Namespace, sveltosCluster.Name,
+		libsveltosv1beta1.SveltosClusterKind, sveltosCluster.Name, libsveltosv1beta1.FeatureTokenRenewal, logger)
+	if err != nil || status == nil || status.DeploymentStatus == nil {
+		return
+	}
+
+	if *status.DeploymentStatus != libsveltosv1beta1.FeatureStatusProvisioned {
+		return
+	}
+
+	err = pullmode.TerminateDeploymentTracking(ctx, r.Client, sveltosCluster.Namespace, sveltosCluster.Name,
+		libsveltosv1beta1.SveltosClusterKind, sveltosCluster.Name, libsveltosv1beta1.FeatureTokenRenewal, logger)
+	if err != nil {
+		logger.V(logs.LogInfo).Error(err, "failed to terminate token-renewal deployment tracking")
+	}
 }
 
 // updateLicenseAnnotations relays the sveltos-license Secret's payload/signature bytes
