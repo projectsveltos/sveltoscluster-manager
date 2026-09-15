@@ -66,6 +66,21 @@ const (
 	secretDataKey  = "data"
 	cronMonday10AM = "0 10 * * 1"
 	cronMonday11AM = "0 11 * * 1"
+
+	// testManagementClusterURL deliberately does not match testEnv.Config.Host, so pull-mode
+	// token renewal tests can assert the delivered kubeconfig used this value and not the
+	// reconciler's own (in-cluster-only) r.Config.Host.
+	testManagementClusterURL = "https://external-management-cluster.example.com:6443"
+
+	// testManagementClusterCA deliberately does not match testEnv.Config.CAData, so pull-mode
+	// token renewal tests can assert the delivered kubeconfig used this value and not the
+	// reconciler's own (not-guaranteed-to-match-externally) r.Config.CAData.
+	testManagementClusterCA = "-----BEGIN CERTIFICATE-----\ntest-management-cluster-ca\n-----END CERTIFICATE-----\n"
+
+	// testSveltosOwnNamespace deliberately does not match the conventional "projectsveltos", so
+	// pull-mode token renewal tests can assert the delivered kubeconfig Secret used
+	// r.SveltosNamespace and not a hardcoded literal.
+	testSveltosOwnNamespace = "custom-sveltos-namespace"
 )
 
 func TestControllers(t *testing.T) {
@@ -103,6 +118,14 @@ var _ = BeforeSuite(func() {
 	Expect(err).To(BeNil())
 	Expect(testEnv.Create(context.TODO(), sveltosCRD)).To(Succeed())
 	Expect(waitForObject(context.TODO(), testEnv, sveltosCRD)).To(Succeed())
+
+	for _, crdYAML := range [][]byte{libsveltoscrd.GetConfigurationGroupCRDYAML(), libsveltoscrd.GetConfigurationBundleCRDYAML()} {
+		var crd *unstructured.Unstructured
+		crd, err = k8s_utils.GetUnstructured(crdYAML)
+		Expect(err).To(BeNil())
+		Expect(testEnv.Create(context.TODO(), crd)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv, crd)).To(Succeed())
+	}
 
 	if synced := testEnv.GetCache().WaitForCacheSync(ctx); !synced {
 		time.Sleep(time.Second)

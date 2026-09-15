@@ -18,6 +18,7 @@ package controllers_test
 
 import (
 	"context"
+	"encoding/base64"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -29,8 +30,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/yaml"
 
 	libsveltosv1beta1 "github.com/projectsveltos/libsveltos/api/v1beta1"
+	"github.com/projectsveltos/libsveltos/lib/pullmode"
 	"github.com/projectsveltos/sveltoscluster-manager/controllers"
 	"github.com/projectsveltos/sveltoscluster-manager/pkg/scope"
 )
@@ -38,6 +41,10 @@ import (
 var _ = Describe("SveltosCluster: Reconciler", func() {
 	var sveltosCluster *libsveltosv1beta1.SveltosCluster
 	var logger logr.Logger
+
+	const (
+		defaultNamespace = "default"
+	)
 
 	BeforeEach(func() {
 		sveltosCluster = getSveltosClusterInstance(randomString(), randomString())
@@ -414,7 +421,7 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 		sa := &corev1.ServiceAccount{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      randomString(),
-				Namespace: "default",
+				Namespace: defaultNamespace,
 			},
 		}
 
@@ -438,6 +445,41 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 		newDuration := controllers.AdjustTokenRequestRenewalOption(reconciler, tokenRequestRenewalOption, tokenRequestStatus, logger)
 		Expect(newDuration.Duration < oneDayInSeconds*time.Second).To(BeTrue())
 	})
+
+	It("adjustTokenRequestRenewalOption does not shrink RenewTokenRequestInterval when TokenDuration is the intended buffer",
+		func() {
+			reconciler := getClusterProfileReconciler(testEnv.Client)
+
+			sa := &corev1.ServiceAccount{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      randomString(),
+					Namespace: defaultNamespace,
+				},
+			}
+
+			Expect(testEnv.Create(context.TODO(), sa)).To(Succeed())
+			Expect(waitForObject(context.TODO(), testEnv.Client, sa)).To(Succeed())
+
+			// Pull-mode-realistic shape: renew every 15 minutes, but the token itself is
+			// requested with a much longer (24h) lifetime as a buffer against connectivity
+			// loss, matching how sveltosctl's --token registration sets these two fields.
+			const renewInterval = 15 * time.Minute
+			const tokenDuration = 24 * time.Hour
+			tokenRequestRenewalOption := &libsveltosv1beta1.TokenRequestRenewalOption{
+				RenewTokenRequestInterval: metav1.Duration{Duration: renewInterval},
+				TokenDuration:             metav1.Duration{Duration: tokenDuration},
+			}
+
+			tokenRequestStatus, err := controllers.GetServiceAccountTokenRequest(reconciler, context.TODO(), testEnv.Config,
+				sa.Namespace, sa.Name, tokenDuration.Seconds(), logger)
+			Expect(err).To(BeNil())
+
+			// The token's actual lifetime (24h) comfortably exceeds RenewTokenRequestInterval
+			// (15m): that gap is the buffer TokenDuration is meant to provide, not a shortfall,
+			// so RenewTokenRequestInterval must come back unchanged.
+			newDuration := controllers.AdjustTokenRequestRenewalOption(reconciler, tokenRequestRenewalOption, tokenRequestStatus, logger)
+			Expect(newDuration.Duration).To(Equal(renewInterval))
+		})
 
 	It("reconcilePullModeCluster verifies last update from sveltos-applier", func() {
 		ns := &corev1.Namespace{
@@ -513,6 +555,199 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 
 		Expect(currentSveltosCluster.Status.FailureMessage).ToNot(BeNil())
 	})
+
+	It("handlePullModeTokenRequestRenewal stages the renewed kubeconfig using the ConfigMap's server URL, not r.Config.Host",
+		func() {
+			ns := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: sveltosCluster.Namespace,
+				},
+			}
+			Expect(testEnv.Create(context.TODO(), ns)).To(Succeed())
+			Expect(waitForObject(context.TODO(), testEnv.Client, ns)).To(Succeed())
+
+			sa := &corev1.ServiceAccount{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      sveltosCluster.Name,
+					Namespace: sveltosCluster.Namespace,
+				},
+			}
+			Expect(testEnv.Create(context.TODO(), sa)).To(Succeed())
+			Expect(waitForObject(context.TODO(), testEnv.Client, sa)).To(Succeed())
+
+			// testManagementClusterURL is what sveltosctl's --management-cluster-url would
+			// persist at registration time.
+			serverConfigMap := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      sveltosCluster.Name,
+					Namespace: sveltosCluster.Namespace,
+				},
+				Data: map[string]string{
+					controllers.PullModeManagementClusterURLConfigMapKey: testManagementClusterURL,
+					controllers.PullModeManagementClusterCAConfigMapKey:  testManagementClusterCA,
+				},
+			}
+			Expect(testEnv.Create(context.TODO(), serverConfigMap)).To(Succeed())
+			Expect(waitForObject(context.TODO(), testEnv.Client, serverConfigMap)).To(Succeed())
+
+			sveltosCluster.Spec.PullMode = true
+			sveltosCluster.Spec.TokenRequestRenewalOption = &libsveltosv1beta1.TokenRequestRenewalOption{
+				RenewTokenRequestInterval: metav1.Duration{Duration: time.Hour},
+				TokenDuration:             metav1.Duration{Duration: 24 * time.Hour},
+				SAName:                    sa.Name,
+				SANamespace:               sa.Namespace,
+			}
+			Expect(testEnv.Create(context.TODO(), sveltosCluster)).To(Succeed())
+			Expect(waitForObject(context.TODO(), testEnv.Client, sveltosCluster)).To(Succeed())
+
+			reconciler := &controllers.SveltosClusterReconciler{
+				Client:           testEnv.Client,
+				Config:           *testEnv.Config,
+				Scheme:           scheme,
+				SveltosNamespace: testSveltosOwnNamespace,
+			}
+
+			sveltosClusterScope, err := scope.NewSveltosClusterScope(scope.SveltosClusterScopeParams{
+				Client:         testEnv.Client,
+				SveltosCluster: sveltosCluster,
+				ControllerName: randomString(),
+				Logger:         logger,
+			})
+			Expect(err).To(BeNil())
+
+			Expect(controllers.HandlePullModeTokenRequestRenewal(reconciler, context.TODO(), sveltosClusterScope, logger)).
+				To(Succeed())
+			Expect(sveltosCluster.Status.LastReconciledTokenRequestAt).ToNot(BeEmpty())
+
+			var bundles libsveltosv1beta1.ConfigurationBundleList
+			Eventually(func() int {
+				Expect(testEnv.List(context.TODO(), &bundles, client.InNamespace(sveltosCluster.Namespace),
+					client.MatchingLabels(pullmode.GetClusterLabels(sveltosCluster.Namespace, sveltosCluster.Name)))).To(Succeed())
+				return len(bundles.Items)
+			}, timeout, pollingInterval).Should(Equal(1))
+
+			Expect(bundles.Items[0].Spec.Resources).To(HaveLen(1))
+
+			// The bundle resource is the YAML of a corev1.Secret; its kubeconfig content is
+			// base64-encoded in Data, so decode it before checking which server address it has.
+			deliveredSecret := &corev1.Secret{}
+			Expect(yaml.Unmarshal([]byte(bundles.Items[0].Spec.Resources[0]), deliveredSecret)).To(Succeed())
+
+			// The Secret's own namespace must be sveltoscluster-manager's namespace
+			// (r.SveltosNamespace, read from NAMESPACE), not a hardcoded "projectsveltos": every
+			// Sveltos component, on both the management and the managed cluster, is deployed into
+			// the same namespace name by convention, and that name need not be "projectsveltos".
+			Expect(deliveredSecret.Namespace).To(Equal(testSveltosOwnNamespace))
+
+			deliveredKubeconfig := string(deliveredSecret.Data[controllers.PullModeKubeconfigSecretKey])
+			Expect(deliveredKubeconfig).To(ContainSubstring(testManagementClusterURL))
+			Expect(deliveredKubeconfig).ToNot(ContainSubstring(testEnv.Config.Host))
+
+			// The kubeconfig's certificate-authority-data must be the CA persisted in the
+			// ConfigMap (proven to validate the external endpoint), not sveltoscluster-manager's
+			// own in-cluster CA, which is not guaranteed to validate it too (observed on Civo).
+			Expect(deliveredKubeconfig).To(ContainSubstring(base64.StdEncoding.EncodeToString([]byte(testManagementClusterCA))))
+			Expect(deliveredKubeconfig).ToNot(ContainSubstring(base64.StdEncoding.EncodeToString(testEnv.Config.CAData)))
+
+			// sveltos-applier's deployResourcesInConfigurationBundle dereferences SourceRef
+			// whenever the bundle doesn't set ReferencedObjectKind (ours never does), so a nil
+			// SourceRef here causes a nil pointer panic on the managed cluster.
+			var groups libsveltosv1beta1.ConfigurationGroupList
+			Expect(testEnv.List(context.TODO(), &groups, client.InNamespace(sveltosCluster.Namespace),
+				client.MatchingLabels(pullmode.GetClusterLabels(sveltosCluster.Namespace, sveltosCluster.Name)))).To(Succeed())
+			Expect(groups.Items).To(HaveLen(1))
+			Expect(groups.Items[0].Spec.SourceRef).ToNot(BeNil())
+			Expect(groups.Items[0].Spec.SourceRef.Kind).To(Equal(libsveltosv1beta1.SveltosClusterKind))
+			Expect(groups.Items[0].Spec.SourceRef.Name).To(Equal(sveltosCluster.Name))
+			Expect(groups.Items[0].Spec.SourceRef.Namespace).To(Equal(sveltosCluster.Namespace))
+		})
+
+	It("terminatePullModeTokenRenewalTrackingIfProvisioned removes the ConfigurationGroup/Bundle once provisioned",
+		func() {
+			ns := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: sveltosCluster.Namespace,
+				},
+			}
+			Expect(testEnv.Create(context.TODO(), ns)).To(Succeed())
+			Expect(waitForObject(context.TODO(), testEnv.Client, ns)).To(Succeed())
+
+			sa := &corev1.ServiceAccount{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      sveltosCluster.Name,
+					Namespace: sveltosCluster.Namespace,
+				},
+			}
+			Expect(testEnv.Create(context.TODO(), sa)).To(Succeed())
+			Expect(waitForObject(context.TODO(), testEnv.Client, sa)).To(Succeed())
+
+			serverConfigMap := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      sveltosCluster.Name,
+					Namespace: sveltosCluster.Namespace,
+				},
+				Data: map[string]string{
+					controllers.PullModeManagementClusterURLConfigMapKey: testManagementClusterURL,
+					controllers.PullModeManagementClusterCAConfigMapKey:  testManagementClusterCA,
+				},
+			}
+			Expect(testEnv.Create(context.TODO(), serverConfigMap)).To(Succeed())
+			Expect(waitForObject(context.TODO(), testEnv.Client, serverConfigMap)).To(Succeed())
+
+			sveltosCluster.Spec.PullMode = true
+			sveltosCluster.Spec.TokenRequestRenewalOption = &libsveltosv1beta1.TokenRequestRenewalOption{
+				RenewTokenRequestInterval: metav1.Duration{Duration: time.Hour},
+				TokenDuration:             metav1.Duration{Duration: 24 * time.Hour},
+				SAName:                    sa.Name,
+				SANamespace:               sa.Namespace,
+			}
+			Expect(testEnv.Create(context.TODO(), sveltosCluster)).To(Succeed())
+			Expect(waitForObject(context.TODO(), testEnv.Client, sveltosCluster)).To(Succeed())
+
+			reconciler := &controllers.SveltosClusterReconciler{
+				Client:           testEnv.Client,
+				Config:           *testEnv.Config,
+				Scheme:           scheme,
+				SveltosNamespace: testSveltosOwnNamespace,
+			}
+
+			sveltosClusterScope, err := scope.NewSveltosClusterScope(scope.SveltosClusterScopeParams{
+				Client:         testEnv.Client,
+				SveltosCluster: sveltosCluster,
+				ControllerName: randomString(),
+				Logger:         logger,
+			})
+			Expect(err).To(BeNil())
+
+			Expect(controllers.HandlePullModeTokenRequestRenewal(reconciler, context.TODO(), sveltosClusterScope, logger)).
+				To(Succeed())
+
+			var groups libsveltosv1beta1.ConfigurationGroupList
+			Eventually(func() int {
+				Expect(testEnv.List(context.TODO(), &groups, client.InNamespace(sveltosCluster.Namespace),
+					client.MatchingLabels(pullmode.GetClusterLabels(sveltosCluster.Namespace, sveltosCluster.Name)))).To(Succeed())
+				return len(groups.Items)
+			}, timeout, pollingInterval).Should(Equal(1))
+
+			// Simulate sveltos-applier confirming it applied the renewed kubeconfig.
+			provisioned := libsveltosv1beta1.FeatureStatusProvisioned
+			currentGroup := &groups.Items[0]
+			currentGroup.Status.DeploymentStatus = &provisioned
+			Expect(testEnv.Status().Update(context.TODO(), currentGroup)).To(Succeed())
+
+			Eventually(func() bool {
+				controllers.TerminatePullModeTokenRenewalTrackingIfProvisioned(reconciler, context.TODO(), sveltosCluster, logger)
+
+				var remainingGroups libsveltosv1beta1.ConfigurationGroupList
+				Expect(testEnv.List(context.TODO(), &remainingGroups, client.InNamespace(sveltosCluster.Namespace),
+					client.MatchingLabels(pullmode.GetClusterLabels(sveltosCluster.Namespace, sveltosCluster.Name)))).To(Succeed())
+				var remainingBundles libsveltosv1beta1.ConfigurationBundleList
+				Expect(testEnv.List(context.TODO(), &remainingBundles, client.InNamespace(sveltosCluster.Namespace),
+					client.MatchingLabels(pullmode.GetClusterLabels(sveltosCluster.Namespace, sveltosCluster.Name)))).To(Succeed())
+
+				return len(remainingGroups.Items) == 0 && len(remainingBundles.Items) == 0
+			}, timeout, pollingInterval).Should(BeTrue())
+		})
 })
 
 func getSveltosClusterInstance(namespace, name string) *libsveltosv1beta1.SveltosCluster {
