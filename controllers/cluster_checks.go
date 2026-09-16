@@ -150,7 +150,7 @@ func getResourcesMatchinResourceSelector(ctx context.Context, remotConfig *rest.
 	resources := []*unstructured.Unstructured{}
 	for i := range list.Items {
 		resource := &list.Items[i]
-		if !resource.GetDeletionTimestamp().IsZero() {
+		if !resourceSelector.IncludeDeletingResources && !resource.GetDeletionTimestamp().IsZero() {
 			continue
 		}
 		isMatch, err := isMatch(resource, resourceSelector, logger)
