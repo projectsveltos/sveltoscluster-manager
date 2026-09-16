@@ -42,3 +42,7 @@ const (
 var (
 	HandleAutomaticPauseUnPause = handleAutomaticPauseUnPause
 )
+
+var (
+	GetResourcesMatchinResourceSelector = getResourcesMatchinResourceSelector
+)
