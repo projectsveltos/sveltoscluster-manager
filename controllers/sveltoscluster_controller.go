@@ -43,6 +43,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	libsveltosv1beta1 "github.com/projectsveltos/libsveltos/api/v1beta1"
@@ -59,6 +60,10 @@ const (
 	// normalRequeueAfter is how long to wait before checking again to see if the cluster can be moved
 	// to ready after or workload features (for instance ingress or reporter) have failed
 	normalRequeueAfter = 10 * time.Second
+
+	// deleteRequeueAfter is how long to wait before checking again whether a deleting SveltosCluster's
+	// Spec.CleanupGracePeriod has elapsed and its finalizer can be removed.
+	deleteRequeueAfter = time.Minute
 
 	versionLabel = "projectsveltos.io/k8s-version"
 
@@ -169,15 +174,44 @@ func (r *SveltosClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// Handle deleted clusterProfile
 	if !sveltosCluster.DeletionTimestamp.IsZero() {
-		clusterproxy.EvictWorkloadIdentityCache(sveltosCluster.Namespace, sveltosCluster.Name)
-		deleteClusterMetrics(string(libsveltosv1beta1.ClusterTypeSveltos), sveltosCluster.Namespace, sveltosCluster.Name, logger)
-		return reconcile.Result{}, nil
+		return r.reconcileDelete(sveltosClusterScope, logger), nil
 	}
 
 	// Handle non-deleted clusterProfile
 	r.reconcileNormal(ctx, sveltosClusterScope)
 	// Periodically reconcile. We need to keep evaluating connectivity
 	return reconcile.Result{RequeueAfter: time.Minute}, nil
+}
+
+// reconcileDelete, once Spec.CleanupGracePeriod (if any) has elapsed since
+// DeletionTimestamp, evicts this SveltosCluster's cached state and removes the
+// finalizer so the object can actually be removed. Until then, the cluster's
+// cached connectivity state and metrics are left untouched: it is still
+// considered registered for the duration of the grace period.
+func (r *SveltosClusterReconciler) reconcileDelete(
+	sveltosClusterScope *scope.SveltosClusterScope,
+	logger logr.Logger,
+) reconcile.Result {
+
+	sveltosCluster := sveltosClusterScope.SveltosCluster
+
+	if !controllerutil.ContainsFinalizer(sveltosCluster, libsveltosv1beta1.SveltosClusterFinalizer) {
+		return reconcile.Result{}
+	}
+
+	if sveltosCluster.Spec.CleanupGracePeriod != nil {
+		deadline := sveltosCluster.DeletionTimestamp.Add(sveltosCluster.Spec.CleanupGracePeriod.Duration)
+		if time.Now().Before(deadline) {
+			logger.V(logs.LogDebug).Info("cleanupGracePeriod has not elapsed yet, delaying finalizer removal")
+			return reconcile.Result{RequeueAfter: deleteRequeueAfter}
+		}
+	}
+
+	clusterproxy.EvictWorkloadIdentityCache(sveltosCluster.Namespace, sveltosCluster.Name)
+	deleteClusterMetrics(string(libsveltosv1beta1.ClusterTypeSveltos), sveltosCluster.Namespace, sveltosCluster.Name, logger)
+
+	controllerutil.RemoveFinalizer(sveltosCluster, libsveltosv1beta1.SveltosClusterFinalizer)
+	return reconcile.Result{}
 }
 
 func (r *SveltosClusterReconciler) reconcileNormal(
@@ -187,6 +221,10 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 
 	logger := sveltosClusterScope.Logger
 	logger.V(logs.LogDebug).Info("Reconciling SveltosCluster")
+
+	if !controllerutil.ContainsFinalizer(sveltosClusterScope.SveltosCluster, libsveltosv1beta1.SveltosClusterFinalizer) {
+		controllerutil.AddFinalizer(sveltosClusterScope.SveltosCluster, libsveltosv1beta1.SveltosClusterFinalizer)
+	}
 
 	defer handleAutomaticPauseUnPause(sveltosClusterScope.SveltosCluster, time.Now(), logger)
 
