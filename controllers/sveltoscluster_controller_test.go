@@ -25,11 +25,13 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2/textlogger"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/yaml"
 
 	libsveltosv1beta1 "github.com/projectsveltos/libsveltos/api/v1beta1"
@@ -748,6 +750,138 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 				return len(remainingGroups.Items) == 0 && len(remainingBundles.Items) == 0
 			}, timeout, pollingInterval).Should(BeTrue())
 		})
+
+	It("reconcile adds the finalizer to a new SveltosCluster", func() {
+		ns := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: sveltosCluster.Namespace,
+			},
+		}
+		Expect(testEnv.Create(context.TODO(), ns)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, ns)).To(Succeed())
+
+		Expect(testEnv.Create(context.TODO(), sveltosCluster)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, sveltosCluster)).To(Succeed())
+
+		reconciler := getClusterProfileReconciler(testEnv.Client)
+
+		sveltosClusterName := client.ObjectKey{
+			Name:      sveltosCluster.Name,
+			Namespace: sveltosCluster.Namespace,
+		}
+		_, err := reconciler.Reconcile(context.TODO(), ctrl.Request{
+			NamespacedName: sveltosClusterName,
+		})
+		Expect(err).ToNot(HaveOccurred())
+
+		currentSveltosCluster := &libsveltosv1beta1.SveltosCluster{}
+		Expect(testEnv.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)).To(Succeed())
+		Expect(controllerutil.ContainsFinalizer(currentSveltosCluster, libsveltosv1beta1.SveltosClusterFinalizer)).To(BeTrue())
+	})
+
+	It("reconcile removes the finalizer immediately when CleanupGracePeriod is not set", func() {
+		ns := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: sveltosCluster.Namespace,
+			},
+		}
+		Expect(testEnv.Create(context.TODO(), ns)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, ns)).To(Succeed())
+
+		Expect(testEnv.Create(context.TODO(), sveltosCluster)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, sveltosCluster)).To(Succeed())
+
+		reconciler := getClusterProfileReconciler(testEnv.Client)
+
+		sveltosClusterName := client.ObjectKey{
+			Name:      sveltosCluster.Name,
+			Namespace: sveltosCluster.Namespace,
+		}
+		// First reconcile adds the finalizer.
+		_, err := reconciler.Reconcile(context.TODO(), ctrl.Request{NamespacedName: sveltosClusterName})
+		Expect(err).ToNot(HaveOccurred())
+
+		Expect(testEnv.Delete(context.TODO(), sveltosCluster)).To(Succeed())
+
+		Eventually(func() error {
+			_, err := reconciler.Reconcile(context.TODO(), ctrl.Request{NamespacedName: sveltosClusterName})
+			if err != nil {
+				return err
+			}
+			return testEnv.Get(context.TODO(), sveltosClusterName, &libsveltosv1beta1.SveltosCluster{})
+		}, timeout, pollingInterval).Should(MatchError(apierrors.IsNotFound, "IsNotFound"))
+	})
+
+	It("reconcile delays finalizer removal until CleanupGracePeriod elapses", func() {
+		ns := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: sveltosCluster.Namespace,
+			},
+		}
+		Expect(testEnv.Create(context.TODO(), ns)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, ns)).To(Succeed())
+
+		sveltosCluster.Spec.CleanupGracePeriod = &metav1.Duration{Duration: time.Hour}
+		Expect(testEnv.Create(context.TODO(), sveltosCluster)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, sveltosCluster)).To(Succeed())
+
+		reconciler := getClusterProfileReconciler(testEnv.Client)
+
+		sveltosClusterName := client.ObjectKey{
+			Name:      sveltosCluster.Name,
+			Namespace: sveltosCluster.Namespace,
+		}
+		// First reconcile adds the finalizer.
+		_, err := reconciler.Reconcile(context.TODO(), ctrl.Request{NamespacedName: sveltosClusterName})
+		Expect(err).ToNot(HaveOccurred())
+
+		Expect(testEnv.Delete(context.TODO(), sveltosCluster)).To(Succeed())
+
+		result, err := reconciler.Reconcile(context.TODO(), ctrl.Request{NamespacedName: sveltosClusterName})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(controllers.DeleteRequeueAfter))
+
+		currentSveltosCluster := &libsveltosv1beta1.SveltosCluster{}
+		Expect(testEnv.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)).To(Succeed())
+		Expect(controllerutil.ContainsFinalizer(currentSveltosCluster, libsveltosv1beta1.SveltosClusterFinalizer)).To(BeTrue())
+	})
+
+	It("reconcile removes the finalizer once CleanupGracePeriod has elapsed", func() {
+		ns := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: sveltosCluster.Namespace,
+			},
+		}
+		Expect(testEnv.Create(context.TODO(), ns)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, ns)).To(Succeed())
+
+		const cleanupGracePeriod = 100 * time.Millisecond
+		sveltosCluster.Spec.CleanupGracePeriod = &metav1.Duration{Duration: cleanupGracePeriod}
+		Expect(testEnv.Create(context.TODO(), sveltosCluster)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, sveltosCluster)).To(Succeed())
+
+		reconciler := getClusterProfileReconciler(testEnv.Client)
+
+		sveltosClusterName := client.ObjectKey{
+			Name:      sveltosCluster.Name,
+			Namespace: sveltosCluster.Namespace,
+		}
+		// First reconcile adds the finalizer.
+		_, err := reconciler.Reconcile(context.TODO(), ctrl.Request{NamespacedName: sveltosClusterName})
+		Expect(err).ToNot(HaveOccurred())
+
+		Expect(testEnv.Delete(context.TODO(), sveltosCluster)).To(Succeed())
+
+		time.Sleep(2 * cleanupGracePeriod)
+
+		Eventually(func() error {
+			_, err := reconciler.Reconcile(context.TODO(), ctrl.Request{NamespacedName: sveltosClusterName})
+			if err != nil {
+				return err
+			}
+			return testEnv.Get(context.TODO(), sveltosClusterName, &libsveltosv1beta1.SveltosCluster{})
+		}, timeout, pollingInterval).Should(MatchError(apierrors.IsNotFound, "IsNotFound"))
+	})
 })
 
 func getSveltosClusterInstance(namespace, name string) *libsveltosv1beta1.SveltosCluster {

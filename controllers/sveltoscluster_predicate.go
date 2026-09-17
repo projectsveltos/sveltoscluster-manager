@@ -44,6 +44,15 @@ func SveltosClusterPredicates(logger logr.Logger) predicate.Funcs {
 				return true
 			}
 
+			// SveltosCluster entering deletion is a metadata-only change (deletionTimestamp),
+			// so it would otherwise be missed by the Spec comparison below.
+			if oldCluster.DeletionTimestamp.IsZero() && !newCluster.DeletionTimestamp.IsZero() {
+				log.V(logs.LogVerbose).Info(
+					"SveltosCluster is now marked for deletion. Will attempt to reconcile.",
+				)
+				return true
+			}
+
 			// a Spec change migth change needs to be processed
 			if !reflect.DeepEqual(oldCluster.Spec, newCluster.Spec) {
 				log.V(logs.LogVerbose).Info(

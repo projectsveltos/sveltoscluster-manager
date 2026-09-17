@@ -37,6 +37,7 @@ const (
 	PullModeKubeconfigSecretKey              = pullModeKubeconfigSecretKey
 	PullModeManagementClusterURLConfigMapKey = pullModeManagementClusterURLConfigMapKey
 	PullModeManagementClusterCAConfigMapKey  = pullModeManagementClusterCAConfigMapKey
+	DeleteRequeueAfter                       = deleteRequeueAfter
 )
 
 var (
