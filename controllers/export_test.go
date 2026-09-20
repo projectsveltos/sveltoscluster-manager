@@ -47,3 +47,18 @@ var (
 var (
 	GetResourcesMatchinResourceSelector = getResourcesMatchinResourceSelector
 )
+
+var (
+	UpdateClusterConnectionStatusMetric = updateClusterConnectionStatusMetric
+	UpdateKubernetesVersionMetric       = updateKubernetesVersionMetric
+	UpdateConnectionFailuresMetric      = updateConnectionFailuresMetric
+	UpdateAgentLastHeartbeatMetric      = updateAgentLastHeartbeatMetric
+	DeleteClusterMetrics                = deleteClusterMetrics
+)
+
+var (
+	ClusterConnectivityGauge         = clusterConnectivityGauge
+	KubernetesVersionGauge           = kubernetesVersionGauge
+	ConnectionFailuresGauge          = connectionFailuresGauge
+	AgentLastHeartbeatTimestampGauge = agentLastHeartbeatTimestampGauge
+)
