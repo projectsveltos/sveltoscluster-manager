@@ -751,7 +751,36 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 			}, timeout, pollingInterval).Should(BeTrue())
 		})
 
-	It("reconcile adds the finalizer to a new SveltosCluster", func() {
+	It("reconcile adds the finalizer to a new SveltosCluster with CleanupGracePeriod set", func() {
+		ns := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: sveltosCluster.Namespace,
+			},
+		}
+		Expect(testEnv.Create(context.TODO(), ns)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, ns)).To(Succeed())
+
+		sveltosCluster.Spec.CleanupGracePeriod = &metav1.Duration{Duration: time.Hour}
+		Expect(testEnv.Create(context.TODO(), sveltosCluster)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, sveltosCluster)).To(Succeed())
+
+		reconciler := getClusterProfileReconciler(testEnv.Client)
+
+		sveltosClusterName := client.ObjectKey{
+			Name:      sveltosCluster.Name,
+			Namespace: sveltosCluster.Namespace,
+		}
+		_, err := reconciler.Reconcile(context.TODO(), ctrl.Request{
+			NamespacedName: sveltosClusterName,
+		})
+		Expect(err).ToNot(HaveOccurred())
+
+		currentSveltosCluster := &libsveltosv1beta1.SveltosCluster{}
+		Expect(testEnv.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)).To(Succeed())
+		Expect(controllerutil.ContainsFinalizer(currentSveltosCluster, libsveltosv1beta1.SveltosClusterFinalizer)).To(BeTrue())
+	})
+
+	It("reconcile does not add the finalizer when CleanupGracePeriod is not set", func() {
 		ns := &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: sveltosCluster.Namespace,
@@ -776,7 +805,37 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 
 		currentSveltosCluster := &libsveltosv1beta1.SveltosCluster{}
 		Expect(testEnv.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)).To(Succeed())
-		Expect(controllerutil.ContainsFinalizer(currentSveltosCluster, libsveltosv1beta1.SveltosClusterFinalizer)).To(BeTrue())
+		Expect(controllerutil.ContainsFinalizer(currentSveltosCluster, libsveltosv1beta1.SveltosClusterFinalizer)).To(BeFalse())
+	})
+
+	It("reconcile removes an existing finalizer when CleanupGracePeriod is not set", func() {
+		ns := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: sveltosCluster.Namespace,
+			},
+		}
+		Expect(testEnv.Create(context.TODO(), ns)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, ns)).To(Succeed())
+
+		// As left by a version that added the finalizer unconditionally.
+		controllerutil.AddFinalizer(sveltosCluster, libsveltosv1beta1.SveltosClusterFinalizer)
+		Expect(testEnv.Create(context.TODO(), sveltosCluster)).To(Succeed())
+		Expect(waitForObject(context.TODO(), testEnv.Client, sveltosCluster)).To(Succeed())
+
+		reconciler := getClusterProfileReconciler(testEnv.Client)
+
+		sveltosClusterName := client.ObjectKey{
+			Name:      sveltosCluster.Name,
+			Namespace: sveltosCluster.Namespace,
+		}
+		_, err := reconciler.Reconcile(context.TODO(), ctrl.Request{
+			NamespacedName: sveltosClusterName,
+		})
+		Expect(err).ToNot(HaveOccurred())
+
+		currentSveltosCluster := &libsveltosv1beta1.SveltosCluster{}
+		Expect(testEnv.Get(context.TODO(), sveltosClusterName, currentSveltosCluster)).To(Succeed())
+		Expect(controllerutil.ContainsFinalizer(currentSveltosCluster, libsveltosv1beta1.SveltosClusterFinalizer)).To(BeFalse())
 	})
 
 	It("reconcile removes the finalizer immediately when CleanupGracePeriod is not set", func() {
@@ -788,6 +847,8 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 		Expect(testEnv.Create(context.TODO(), ns)).To(Succeed())
 		Expect(waitForObject(context.TODO(), testEnv.Client, ns)).To(Succeed())
 
+		// As left by a version that added the finalizer unconditionally.
+		controllerutil.AddFinalizer(sveltosCluster, libsveltosv1beta1.SveltosClusterFinalizer)
 		Expect(testEnv.Create(context.TODO(), sveltosCluster)).To(Succeed())
 		Expect(waitForObject(context.TODO(), testEnv.Client, sveltosCluster)).To(Succeed())
 
@@ -797,9 +858,6 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 			Name:      sveltosCluster.Name,
 			Namespace: sveltosCluster.Namespace,
 		}
-		// First reconcile adds the finalizer.
-		_, err := reconciler.Reconcile(context.TODO(), ctrl.Request{NamespacedName: sveltosClusterName})
-		Expect(err).ToNot(HaveOccurred())
 
 		Expect(testEnv.Delete(context.TODO(), sveltosCluster)).To(Succeed())
 

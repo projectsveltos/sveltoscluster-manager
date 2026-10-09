@@ -223,8 +223,17 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 	logger := sveltosClusterScope.Logger
 	logger.V(logs.LogDebug).Info("Reconciling SveltosCluster")
 
-	if !controllerutil.ContainsFinalizer(sveltosClusterScope.SveltosCluster, libsveltosv1beta1.SveltosClusterFinalizer) {
+	// The finalizer only exists to hold a deleting SveltosCluster for Spec.CleanupGracePeriod.
+	// Without a grace period deletion stays immediate and must not depend on this controller
+	// still running (e.g. Sveltos uninstalled before its SveltosClusters are deleted).
+	//
+	// Removing it, not just skipping the add, matters for existing installs.
+	// Clusters that already got the finalizer (such as mgmt/mgmt) from 1.16.0 (bug: https://github.com/projectsveltos/sveltoscluster-manager/issues/388),
+	// lose it on the next normal reconcile, which runs every minute. It also covers someone unsetting cleanupGracePeriod later.
+	if sveltosClusterScope.SveltosCluster.Spec.CleanupGracePeriod != nil {
 		controllerutil.AddFinalizer(sveltosClusterScope.SveltosCluster, libsveltosv1beta1.SveltosClusterFinalizer)
+	} else {
+		controllerutil.RemoveFinalizer(sveltosClusterScope.SveltosCluster, libsveltosv1beta1.SveltosClusterFinalizer)
 	}
 
 	defer handleAutomaticPauseUnPause(sveltosClusterScope.SveltosCluster, time.Now(), logger)
