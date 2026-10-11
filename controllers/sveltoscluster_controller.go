@@ -40,6 +40,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	apiv1 "k8s.io/client-go/tools/clientcmd/api/v1"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -100,6 +101,8 @@ type SveltosClusterReconciler struct {
 	ConcurrentReconciles int
 	ShardKey             string // when set, only clusters matching the ShardKey will be reconciled
 	SveltosNamespace     string // namespace holding the sveltos-license Secret
+	// EventRecorder is used to record events on SveltosCluster instances. No event is recorded when nil.
+	EventRecorder events.EventRecorder
 }
 
 type matchStatus struct {
@@ -116,6 +119,7 @@ type checkStatus struct {
 //+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=sveltosclusters/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;update
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+//+kubebuilder:rbac:groups="events.k8s.io",resources=events,verbs=create;update;patch
 //+kubebuilder:rbac:groups="",resources=serviceaccounts/token,verbs=create
 //+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=debuggingconfigurations,verbs=get;list;watch
 //+kubebuilder:rbac:groups=lib.projectsveltos.io,resources=configurationgroups,verbs=get;list;watch;create;delete;update;patch
@@ -250,7 +254,7 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 		errorMessage := err.Error()
 		logger.V(logs.LogInfo).Error(err, "failed to get client")
 		sveltosClusterScope.SveltosCluster.Status.FailureMessage = &errorMessage
-		updateConnectionStatus(sveltosClusterScope, logger)
+		r.updateConnectionStatus(sveltosClusterScope, logger)
 		return
 	}
 
@@ -293,14 +297,16 @@ func (r *SveltosClusterReconciler) reconcileNormal(
 		}
 	}
 
-	updateConnectionStatus(sveltosClusterScope, logger)
+	r.updateConnectionStatus(sveltosClusterScope, logger)
 	updateClusterConnectionStatusMetric(string(libsveltosv1beta1.ClusterTypeSveltos), sveltosClusterScope.SveltosCluster.Namespace,
 		sveltosClusterScope.SveltosCluster.Name, sveltosClusterScope.SveltosCluster.Status.ConnectionStatus, logger)
 	updateConnectionFailuresMetric(string(libsveltosv1beta1.ClusterTypeSveltos), sveltosClusterScope.SveltosCluster.Namespace,
 		sveltosClusterScope.SveltosCluster.Name, sveltosClusterScope.SveltosCluster.Status.ConnectionFailures, logger)
 }
 
-func updateConnectionStatus(sveltosClusterScope *scope.SveltosClusterScope, logger logr.Logger) {
+func (r *SveltosClusterReconciler) updateConnectionStatus(sveltosClusterScope *scope.SveltosClusterScope, logger logr.Logger) {
+	previousStatus := sveltosClusterScope.SveltosCluster.Status.ConnectionStatus
+
 	if sveltosClusterScope.SveltosCluster.Status.FailureMessage != nil {
 		logger.V(logs.LogDebug).Info("increasing connectionFailures")
 		sveltosClusterScope.SveltosCluster.Status.ConnectionFailures++
@@ -312,6 +318,8 @@ func updateConnectionStatus(sveltosClusterScope *scope.SveltosClusterScope, logg
 		sveltosClusterScope.SveltosCluster.Status.ConnectionStatus = libsveltosv1beta1.ConnectionHealthy
 		sveltosClusterScope.SveltosCluster.Status.ConnectionFailures = 0
 	}
+
+	r.recordConnectionTransition(sveltosClusterScope.SveltosCluster, previousStatus)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -820,7 +828,7 @@ func (r *SveltosClusterReconciler) reconcilePullModeCluster(
 	updateAgentLastHeartbeatMetric(string(libsveltosv1beta1.ClusterTypeSveltos),
 		cluster.Namespace, cluster.Name, cluster.Status.AgentLastReportTime.Time, logger)
 
-	updateConnectionStatus(sveltosClusterScope, logger)
+	r.updateConnectionStatus(sveltosClusterScope, logger)
 	updateClusterConnectionStatusMetric(string(libsveltosv1beta1.ClusterTypeSveltos),
 		sveltosClusterScope.SveltosCluster.Namespace, sveltosClusterScope.SveltosCluster.Name,
 		sveltosClusterScope.SveltosCluster.Status.ConnectionStatus, logger)

@@ -118,6 +118,7 @@ func main() {
 		ConcurrentReconciles: concurrentReconciles,
 		ShardKey:             shardKey,
 		SveltosNamespace:     sveltosNamespace,
+		EventRecorder:        mgr.GetEventRecorder("event-recorder"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "SveltosCluster")
 		os.Exit(1)
