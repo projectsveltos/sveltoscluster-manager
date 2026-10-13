@@ -90,6 +90,15 @@ const (
 	// a different CA than the in-cluster one.
 	pullModeManagementClusterURLConfigMapKey = "server"
 	pullModeManagementClusterCAConfigMapKey  = "ca.crt"
+
+	// pullModeManagementClusterTLSServerNameConfigMapKey is an optional key in the same
+	// ConfigMap, holding the name the management cluster's API server certificate must be
+	// verified against (the kubeconfig's tls-server-name field). It is needed when the
+	// externally reachable endpoint is a proxy/load balancer passing the TLS connection
+	// through to an API server whose certificate does not carry the endpoint's hostname as a
+	// SAN. When the key is absent or empty, the renewed kubeconfig has no tls-server-name,
+	// exactly as before.
+	pullModeManagementClusterTLSServerNameConfigMapKey = "tls-server-name"
 )
 
 // SveltosClusterReconciler reconciles a SveltosCluster object
@@ -443,7 +452,8 @@ func (r *SveltosClusterReconciler) handleTokenRequestRenewal(ctx context.Context
 
 			logger.V(logs.LogDebug).Info("Get Kubeconfig from TokenRequest")
 			key := r.getKubeconfigKey(sveltosCluster)
-			data := r.getKubeconfigFromToken(saNamespace, saName, tokenRequest.Token, remoteConfig)
+			// push mode: no tls-server-name is carried (see handlePullModeTokenRequestRenewal)
+			data := r.getKubeconfigFromToken(saNamespace, saName, tokenRequest.Token, "", remoteConfig)
 			err = clusterproxy.UpdateSveltosSecretData(ctx, logger, r.Client, sveltosCluster.Namespace, sveltosCluster.Name, data, key)
 			if err != nil {
 				logger.V(logs.LogInfo).Error(err, "failed to update SveltosCluster's Secret")
@@ -537,16 +547,17 @@ func (r *SveltosClusterReconciler) getTokenExpiration(jwt string) (time.Time, er
 }
 
 // getKubeconfigFromToken returns Kubeconfig to access management cluster from token.
-func (r *SveltosClusterReconciler) getKubeconfigFromToken(namespace, serviceAccountName, token string,
-	remoteConfig *rest.Config) string {
+// tlsServerName, when not empty, is written as the cluster's tls-server-name; when empty the
+// field is omitted.
+func (r *SveltosClusterReconciler) getKubeconfigFromToken(namespace, serviceAccountName, token,
+	tlsServerName string, remoteConfig *rest.Config) string {
 
 	template := `apiVersion: v1
 kind: Config
 clusters:
 - name: local
   cluster:
-    server: %s
-    certificate-authority-data: "%s"
+%s
 users:
 - name: %s
   user:
@@ -559,8 +570,13 @@ contexts:
     user: %s
 current-context: sveltos-context`
 
-	data := fmt.Sprintf(template, remoteConfig.Host,
-		base64.StdEncoding.EncodeToString(remoteConfig.CAData), serviceAccountName, token, namespace, serviceAccountName)
+	clusterFields := fmt.Sprintf("    server: %s\n    certificate-authority-data: %q",
+		remoteConfig.Host, base64.StdEncoding.EncodeToString(remoteConfig.CAData))
+	if tlsServerName != "" {
+		clusterFields = fmt.Sprintf("    tls-server-name: %s\n%s", tlsServerName, clusterFields)
+	}
+
+	data := fmt.Sprintf(template, clusterFields, serviceAccountName, token, namespace, serviceAccountName)
 
 	return data
 }
@@ -825,27 +841,33 @@ func (r *SveltosClusterReconciler) reconcilePullModeCluster(
 // the CA data that validates it. r.Config's Host and CAData are not used here: they are this
 // reconciler's own in-cluster view, which is typically an internal address the managed cluster
 // cannot reach, and is not guaranteed to share a CA with the external endpoint either.
+// The ConfigMap may also carry an optional tls-server-name, returned as tlsServerName ("" when
+// absent), to verify the endpoint's certificate against when it does not carry the endpoint's
+// hostname as a SAN.
 func (r *SveltosClusterReconciler) getPullModeManagementClusterEndpoint(ctx context.Context,
-	namespace, name string) (server string, caData []byte, err error) {
+	namespace, name string) (server string, caData []byte, tlsServerName string, err error) {
 
 	configMap := &corev1.ConfigMap{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, configMap); err != nil {
-		return "", nil, err
+		return "", nil, "", err
 	}
 
 	server, ok := configMap.Data[pullModeManagementClusterURLConfigMapKey]
 	if !ok || server == "" {
-		return "", nil, fmt.Errorf("configmap %s/%s does not contain a %q key", namespace, name,
+		return "", nil, "", fmt.Errorf("configmap %s/%s does not contain a %q key", namespace, name,
 			pullModeManagementClusterURLConfigMapKey)
 	}
 
 	ca, ok := configMap.Data[pullModeManagementClusterCAConfigMapKey]
 	if !ok || ca == "" {
-		return "", nil, fmt.Errorf("configmap %s/%s does not contain a %q key", namespace, name,
+		return "", nil, "", fmt.Errorf("configmap %s/%s does not contain a %q key", namespace, name,
 			pullModeManagementClusterCAConfigMapKey)
 	}
 
-	return server, []byte(ca), nil
+	// Optional: absent (or empty) means no tls-server-name in the renewed kubeconfig
+	tlsServerName = configMap.Data[pullModeManagementClusterTLSServerNameConfigMapKey]
+
+	return server, []byte(ca), tlsServerName, nil
 }
 
 // handlePullModeTokenRequestRenewal renews the token for a pull-mode SveltosCluster's
@@ -880,7 +902,8 @@ func (r *SveltosClusterReconciler) handlePullModeTokenRequestRenewal(ctx context
 	// sveltos-applier must instead use the address and CA captured at registration time
 	// (sveltosctl's --management-cluster-url, validated by its own ambient config.CAData), so
 	// read those back here rather than reusing r.Config.Host/CAData.
-	managementClusterURL, managementClusterCA, err := r.getPullModeManagementClusterEndpoint(ctx, opt.SANamespace, opt.SAName)
+	managementClusterURL, managementClusterCA, managementClusterTLSServerName, err :=
+		r.getPullModeManagementClusterEndpoint(ctx, opt.SANamespace, opt.SAName)
 	if err != nil {
 		logger.V(logs.LogInfo).Error(err, "failed to get management cluster endpoint for pull mode cluster")
 		return err
@@ -898,7 +921,8 @@ func (r *SveltosClusterReconciler) handlePullModeTokenRequestRenewal(ctx context
 	kubeconfigServerConfig := r.Config
 	kubeconfigServerConfig.Host = managementClusterURL
 	kubeconfigServerConfig.CAData = managementClusterCA
-	kubeconfigData := r.getKubeconfigFromToken(opt.SANamespace, opt.SAName, tokenRequest.Token, &kubeconfigServerConfig)
+	kubeconfigData := r.getKubeconfigFromToken(opt.SANamespace, opt.SAName, tokenRequest.Token,
+		managementClusterTLSServerName, &kubeconfigServerConfig)
 
 	uSecret, err := runtime.DefaultUnstructuredConverter.ToUnstructured(
 		getPullModeKubeconfigSecret(r.SveltosNamespace, sveltosCluster.Name, kubeconfigData))
