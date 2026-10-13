@@ -38,6 +38,8 @@ const (
 	PullModeManagementClusterURLConfigMapKey = pullModeManagementClusterURLConfigMapKey
 	PullModeManagementClusterCAConfigMapKey  = pullModeManagementClusterCAConfigMapKey
 	DeleteRequeueAfter                       = deleteRequeueAfter
+
+	PullModeManagementClusterTLSServerNameConfigMapKey = pullModeManagementClusterTLSServerNameConfigMapKey
 )
 
 var (

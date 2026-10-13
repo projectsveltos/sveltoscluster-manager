@@ -651,6 +651,9 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 			Expect(deliveredKubeconfig).To(ContainSubstring(base64.StdEncoding.EncodeToString([]byte(testManagementClusterCA))))
 			Expect(deliveredKubeconfig).ToNot(ContainSubstring(base64.StdEncoding.EncodeToString(testEnv.Config.CAData)))
 
+			// The ConfigMap has no tls-server-name key, so the kubeconfig must not have one either.
+			Expect(deliveredKubeconfig).ToNot(ContainSubstring("tls-server-name"))
+
 			// sveltos-applier's deployResourcesInConfigurationBundle dereferences SourceRef
 			// whenever the bundle doesn't set ReferencedObjectKind (ours never does), so a nil
 			// SourceRef here causes a nil pointer panic on the managed cluster.
@@ -662,6 +665,88 @@ var _ = Describe("SveltosCluster: Reconciler", func() {
 			Expect(groups.Items[0].Spec.SourceRef.Kind).To(Equal(libsveltosv1beta1.SveltosClusterKind))
 			Expect(groups.Items[0].Spec.SourceRef.Name).To(Equal(sveltosCluster.Name))
 			Expect(groups.Items[0].Spec.SourceRef.Namespace).To(Equal(sveltosCluster.Namespace))
+		})
+
+	It("handlePullModeTokenRequestRenewal adds tls-server-name to the renewed kubeconfig when the ConfigMap has one",
+		func() {
+			ns := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: sveltosCluster.Namespace,
+				},
+			}
+			Expect(testEnv.Create(context.TODO(), ns)).To(Succeed())
+			Expect(waitForObject(context.TODO(), testEnv.Client, ns)).To(Succeed())
+
+			sa := &corev1.ServiceAccount{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      sveltosCluster.Name,
+					Namespace: sveltosCluster.Namespace,
+				},
+			}
+			Expect(testEnv.Create(context.TODO(), sa)).To(Succeed())
+			Expect(waitForObject(context.TODO(), testEnv.Client, sa)).To(Succeed())
+
+			serverConfigMap := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      sveltosCluster.Name,
+					Namespace: sveltosCluster.Namespace,
+				},
+				Data: map[string]string{
+					controllers.PullModeManagementClusterURLConfigMapKey:           testManagementClusterURL,
+					controllers.PullModeManagementClusterCAConfigMapKey:            testManagementClusterCA,
+					controllers.PullModeManagementClusterTLSServerNameConfigMapKey: "kubernetes",
+				},
+			}
+			Expect(testEnv.Create(context.TODO(), serverConfigMap)).To(Succeed())
+			Expect(waitForObject(context.TODO(), testEnv.Client, serverConfigMap)).To(Succeed())
+
+			sveltosCluster.Spec.PullMode = true
+			sveltosCluster.Spec.TokenRequestRenewalOption = &libsveltosv1beta1.TokenRequestRenewalOption{
+				RenewTokenRequestInterval: metav1.Duration{Duration: time.Hour},
+				TokenDuration:             metav1.Duration{Duration: 24 * time.Hour},
+				SAName:                    sa.Name,
+				SANamespace:               sa.Namespace,
+			}
+			Expect(testEnv.Create(context.TODO(), sveltosCluster)).To(Succeed())
+			Expect(waitForObject(context.TODO(), testEnv.Client, sveltosCluster)).To(Succeed())
+
+			reconciler := &controllers.SveltosClusterReconciler{
+				Client:           testEnv.Client,
+				Config:           *testEnv.Config,
+				Scheme:           scheme,
+				SveltosNamespace: testSveltosOwnNamespace,
+			}
+
+			sveltosClusterScope, err := scope.NewSveltosClusterScope(scope.SveltosClusterScopeParams{
+				Client:         testEnv.Client,
+				SveltosCluster: sveltosCluster,
+				ControllerName: randomString(),
+				Logger:         logger,
+			})
+			Expect(err).To(BeNil())
+
+			Expect(controllers.HandlePullModeTokenRequestRenewal(reconciler, context.TODO(), sveltosClusterScope, logger)).
+				To(Succeed())
+
+			var bundles libsveltosv1beta1.ConfigurationBundleList
+			Eventually(func() int {
+				Expect(testEnv.List(context.TODO(), &bundles, client.InNamespace(sveltosCluster.Namespace),
+					client.MatchingLabels(pullmode.GetClusterLabels(sveltosCluster.Namespace, sveltosCluster.Name)))).To(Succeed())
+				return len(bundles.Items)
+			}, timeout, pollingInterval).Should(Equal(1))
+
+			Expect(bundles.Items[0].Spec.Resources).To(HaveLen(1))
+
+			deliveredSecret := &corev1.Secret{}
+			Expect(yaml.Unmarshal([]byte(bundles.Items[0].Spec.Resources[0]), deliveredSecret)).To(Succeed())
+
+			// The value from the ConfigMap is carried into the renewed kubeconfig, in the cluster
+			// entry next to the server address and CA.
+			deliveredKubeconfig := string(deliveredSecret.Data[controllers.PullModeKubeconfigSecretKey])
+			Expect(deliveredKubeconfig).To(ContainSubstring("    tls-server-name: kubernetes\n"))
+			Expect(deliveredKubeconfig).To(ContainSubstring("    server: " + testManagementClusterURL))
+			Expect(deliveredKubeconfig).To(ContainSubstring(
+				base64.StdEncoding.EncodeToString([]byte(testManagementClusterCA))))
 		})
 
 	It("terminatePullModeTokenRenewalTrackingIfProvisioned removes the ConfigurationGroup/Bundle once provisioned",
