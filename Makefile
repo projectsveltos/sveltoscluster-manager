@@ -25,7 +25,7 @@ ARCH ?= amd64
 OS ?= $(shell uname -s | tr A-Z a-z)
 K8S_LATEST_VER ?= $(shell curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)
 export CONTROLLER_IMG ?= $(REGISTRY)/$(IMAGE_NAME)
-TAG ?= main
+TAG ?= v1.17.0
 
 .PHONY: all
 all: build
@@ -68,8 +68,8 @@ CLUSTERCTL := $(TOOLS_BIN_DIR)/clusterctl
 KIND := $(TOOLS_BIN_DIR)/kind
 KUBECTL := $(TOOLS_BIN_DIR)/kubectl
 
-GOLANGCI_LINT_VERSION := "v2.13.2"
-CLUSTERCTL_VERSION := v1.14.2
+GOLANGCI_LINT_VERSION := "v2.15.0"
+CLUSTERCTL_VERSION := v1.14.3
 
 KUSTOMIZE_VER := v5.8.0
 KUSTOMIZE_BIN := kustomize
