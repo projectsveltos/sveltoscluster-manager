@@ -48,4 +48,6 @@ var (
 
 var (
 	GetResourcesMatchinResourceSelector = getResourcesMatchinResourceSelector
+	IsMatchForLua                       = isMatchForLua
+	ValidateCheck                       = validateCheck
 )

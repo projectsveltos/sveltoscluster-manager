@@ -240,7 +240,7 @@ func isMatchForLua(resource *unstructured.Unstructured, script string, logger lo
 		return true, nil
 	}
 
-	l := lua.NewState()
+	l := sveltoslua.NewSandboxedState()
 	defer l.Close()
 
 	obj := sveltoslua.MapToTable(resource.UnstructuredContent())
@@ -299,7 +299,7 @@ func validateCheck(luaScript string, resources []*unstructured.Unstructured,
 	}
 
 	// Create a new Lua state
-	l := lua.NewState()
+	l := sveltoslua.NewSandboxedState()
 	defer l.Close()
 
 	// Load the Lua script
