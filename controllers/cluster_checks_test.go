@@ -24,6 +24,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2/textlogger"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -90,4 +91,58 @@ var _ = Describe("cluster checks", func() {
 			serviceAccount.Finalizers = nil
 			Expect(testEnv.Update(ctx, serviceAccount)).To(Succeed())
 		})
+})
+
+var _ = Describe("cluster checks Lua sandbox", func() {
+	var resource *unstructured.Unstructured
+
+	BeforeEach(func() {
+		resource = &unstructured.Unstructured{}
+		resource.SetAPIVersion("v1")
+		resource.SetKind("ConfigMap")
+		resource.SetName(randomString())
+		resource.SetNamespace(randomString())
+	})
+
+	It("isMatchForLua does not let a script read host files", func() {
+		script := `
+function evaluate()
+  local f = io.open("/etc/hosts", "r")
+  return {matching=(f ~= nil), message=""}
+end`
+		_, err := controllers.IsMatchForLua(resource, script, textlogger.NewLogger(textlogger.NewConfig()))
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("isMatchForLua still runs a regular script", func() {
+		script := `
+function evaluate()
+  return {matching=(os.time() > 0), message=""}
+end`
+		matching, err := controllers.IsMatchForLua(resource, script, textlogger.NewLogger(textlogger.NewConfig()))
+		Expect(err).To(BeNil())
+		Expect(matching).To(BeTrue())
+	})
+
+	It("validateCheck does not let a script read host files", func() {
+		script := `
+function evaluate()
+  local f = io.open("/etc/hosts", "r")
+  return {pass=(f ~= nil), message=""}
+end`
+		_, _, err := controllers.ValidateCheck(script, []*unstructured.Unstructured{resource},
+			textlogger.NewLogger(textlogger.NewConfig()))
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("validateCheck does not let a script read the environment", func() {
+		script := `
+function evaluate()
+  local home = os.getenv("HOME")
+  return {pass=true, message=""}
+end`
+		_, _, err := controllers.ValidateCheck(script, []*unstructured.Unstructured{resource},
+			textlogger.NewLogger(textlogger.NewConfig()))
+		Expect(err).To(HaveOccurred())
+	})
 })
