@@ -25,7 +25,9 @@ ARCH ?= amd64
 OS ?= $(shell uname -s | tr A-Z a-z)
 K8S_LATEST_VER ?= $(shell curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)
 export CONTROLLER_IMG ?= $(REGISTRY)/$(IMAGE_NAME)
-TAG ?= v1.17.0
+TAG ?= v1.18.0
+# Commit the image is built from, stored in the revision label of the image
+GIT_COMMIT ?= $(shell git rev-parse HEAD)
 
 .PHONY: all
 all: build
@@ -69,7 +71,7 @@ KIND := $(TOOLS_BIN_DIR)/kind
 KUBECTL := $(TOOLS_BIN_DIR)/kubectl
 
 GOLANGCI_LINT_VERSION := "v2.15.0"
-CLUSTERCTL_VERSION := v1.14.3
+CLUSTERCTL_VERSION := v1.14.4
 
 KUSTOMIZE_VER := v5.8.0
 KUSTOMIZE_BIN := kustomize
@@ -191,7 +193,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	docker build --load --build-arg BUILDOS=linux --build-arg TARGETARCH=amd64 --build-arg GIT_VERSION=$(TAG) -t $(CONTROLLER_IMG):$(TAG) .
+	docker build --load --build-arg BUILDOS=linux --build-arg TARGETARCH=amd64 --build-arg GIT_VERSION=$(TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) -t $(CONTROLLER_IMG):$(TAG) .
 	MANIFEST_IMG=$(CONTROLLER_IMG) MANIFEST_TAG=$(TAG) $(MAKE) set-manifest-image
 	$(MAKE) set-manifest-pull-policy
 
@@ -199,9 +201,18 @@ docker-build: ## Build docker image with the manager.
 docker-push: ## Push docker image with the manager.
 	docker push $(CONTROLLER_IMG):$(TAG)
 
+.PHONY: check-clean-tree
+check-clean-tree: ## Fail if the working tree is not clean: the Go build info of the image would say +dirty
+	@# CLAUDE.md is untracked on purpose and is excluded from the image by .dockerignore
+	@if [ -n "$$(git status --porcelain -- . ':(exclude)CLAUDE.md')" ]; then \
+		echo "The working tree is not clean, the image would be stamped +dirty. Commit, stash or remove:"; \
+		git status --porcelain -- . ':(exclude)CLAUDE.md'; \
+		exit 1; \
+	fi
+
 .PHONY: docker-buildx
-docker-buildx: ## docker build for multiple arch and push to docker hub
-	docker buildx build --push --platform linux/amd64,linux/arm64 --build-arg GIT_VERSION=$(TAG) -t $(CONTROLLER_IMG):$(TAG) .
+docker-buildx: check-clean-tree ## docker build for multiple arch and push to docker hub (fails if the working tree is not clean)
+	docker buildx build --push --platform linux/amd64,linux/arm64 --build-arg GIT_VERSION=$(TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) -t $(CONTROLLER_IMG):$(TAG) .
 
 
 .PHONY: load-image
